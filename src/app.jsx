@@ -333,6 +333,33 @@ function parseExcelDatum(v) {
   // niet-herkenbare tekst: ongewijzigd laten
   return s;
 }
+// ---------- uren uit gesprekken ----------
+// Gesprekken vanaf deze datum tellen automatisch mee; oudere uren staan in de handmatige urenregistratie.
+const UREN_UIT_GESPREKKEN_VANAF = '2026-10-22';
+const KANS_NAAR_UREN = { 'Innovatietraject': 'urenTrajecten', 'Challenge': 'urenChallenge', 'LLO': 'urenLLO', 'Innovatietafel': 'urenInnovatie' };
+function catUitKansen(kansen) { const k = (kansen || []).find(x => KANS_NAAR_UREN[x]); return k ? KANS_NAAR_UREN[k] : 'urenOverig'; }
+function gesprekTeltMee(i) { return !!i && ((i.datum || '') >= UREN_UIT_GESPREKKEN_VANAF || String(i.gemaakt || '').slice(0, 10) >= UREN_UIT_GESPREKKEN_VANAF); }
+function gesprekUren(i) { return (Number(i.duur) || 0) * Math.max(1, parseInt(i.aantalExtern, 10) || 1); }
+const uurTekst = n => String(n).replace('.', ',') + ' uur';
+// regels voor de urenverantwoording, berekend uit de gesprekken bij contacten (worden niet apart opgeslagen)
+function urenUitGesprekken(contacten) {
+  const uit = [];
+  (contacten || []).forEach(c => (c.interacties || []).forEach(i => {
+    if (!gesprekTeltMee(i)) return;
+    const totaal = gesprekUren(i);
+    if (!totaal) return;
+    const r = Object.assign(leegUur(), {
+      id: 'gesprek-' + i.id, bron: 'gesprek', contactId: c.id,
+      organisatie: c.organisatie || '', thema: (c.themas || [])[0] || 'Overig', type: c.typeExtern || 'Overig',
+      gemeente: (c.orgAdres && c.orgAdres.gemeente) || '', verbondenPersoon: c.naam || '',
+      interneCollega: i.aanwezig || '', datum: i.datum || '', ondertekenaar: 'nee', dubbel: 'OK',
+      beschrijving: [i.type, i.samenvatting].filter(Boolean).join(': ').slice(0, 200),
+    });
+    r[i.urenCat || catUitKansen(i.kansen)] = String(totaal);
+    uit.push(r);
+  }));
+  return uit;
+}
 function leegUur() {
   return {
     id: uid(), organisatie: '', thema: 'Overig', type: 'Werkveld', ondertekenaar: 'nee',
@@ -1499,7 +1526,7 @@ function ContactDetail({ contact, trajecten, uren = [], kansSoorten = KANS_STAND
   const orgUrenTotaal = orgUren.filter(r => !isUitgesloten(r, urenDups)).reduce((s, r) => s + urenTotaal(r), 0);
 
   function leegInteractie() {
-    return { id: uid(), datum: new Date().toISOString().slice(0,10), type: 'gesprek', aanwezig: '', samenvatting: '', acties: [] };
+    return { id: uid(), datum: new Date().toISOString().slice(0,10), type: 'gesprek', aanwezig: '', samenvatting: '', acties: [], gemaakt: new Date().toISOString(), aantalExtern: 1 };
   }
   function saveInteractie(itx) {
     const exists = (c.interacties || []).some(i => i.id === itx.id);
@@ -1638,6 +1665,7 @@ function ContactDetail({ contact, trajecten, uren = [], kansSoorten = KANS_STAND
                     <span className="text-sm text-slate-500">{i.datum}</span>
                     {(i.kansen || []).map(k => <Badge key={k} className="bg-themalogistiek/30 text-ink border-themalogistiek">kans: {k}</Badge>)}
                     {i.aanwezig && <span className="text-xs text-slate-400">· CG: {i.aanwezig}</span>}
+                    {gesprekTeltMee(i) && i.duur !== undefined && i.duur !== '' && <span className="text-xs text-slate-400">· {i.geenUren ? 'geen uren' : uurTekst(gesprekUren(i)) + ' (' + ((UREN_CATS.find(c => c.key === (i.urenCat || catUitKansen(i.kansen))) || {}).label || '') + ')'}</span>}
                   </div>
                   <div className="flex gap-2">
                     <button onClick={() => { setNieuw(i); setIntOpen(true); }} className="text-xs text-slate-400 hover:text-brand">bewerken</button>
@@ -1691,6 +1719,18 @@ function InteractieForm({ initial, kansSoorten = KANS_STANDAARD, onSave, onCance
   };
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const [actieTekst, setActieTekst] = useState('');
+  const [vraagUren, setVraagUren] = useState(false);
+  const telt = gesprekTeltMee(f);
+  const bewaar = () => {
+    if (!telt) return onSave(f);
+    const leeg = f.duur === '' || f.duur === undefined || f.duur === null;
+    if (leeg && !f.geenUren) { setVraagUren(true); return; }
+    if (!f.geenUren) {
+      const d = Number(f.duur);
+      if (!(d >= 0.5) || Math.abs(d * 2 - Math.round(d * 2)) > 1e-9) { alert('Vul de duur in halve uren in, vanaf 0,5 uur (bijv. 0,5 · 1 · 1,5).'); return; }
+    }
+    onSave({ ...f, duur: f.geenUren ? 0 : Number(f.duur), aantalExtern: Math.max(1, parseInt(f.aantalExtern, 10) || 1) });
+  };
   const addActie = () => {
     const t = actieTekst.trim(); if (!t) return;
     setF(p => ({ ...p, acties: [...p.acties, { id: uid(), tekst: t, done: false, deadline: '', eigenaar: '' }] }));
@@ -1730,6 +1770,44 @@ function InteractieForm({ initial, kansSoorten = KANS_STANDAARD, onSave, onCance
           <button type="button" onClick={voegSoortToe} className="px-3 py-2 rounded-lg border border-slate-300 text-sm hover:bg-slate-50 shrink-0">Toevoegen</button>
         </div>
       </Field>
+      {telt ? (
+        <Field label="Uren partner (urenverantwoording)" full>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-sm text-slate-600 mr-1">Duur</span>
+            {[0.5, 1, 1.5, 2, 3].map(d => (
+              <button key={d} type="button" onClick={() => { setF(p => ({ ...p, duur: d, geenUren: false })); setVraagUren(false); }}
+                className={`text-sm px-3 py-1 rounded-full border ${Number(f.duur) === d && !f.geenUren ? 'bg-brand text-white border-brand' : 'border-slate-300 text-slate-600 hover:border-brand'}`}>{String(d).replace('.', ',')}</button>
+            ))}
+            <input type="number" min="0.5" step="0.5" value={f.geenUren ? '' : (f.duur ?? '')} onChange={e => { setF(p => ({ ...p, duur: e.target.value, geenUren: false })); setVraagUren(false); }}
+              className="w-20 border border-slate-300 rounded-lg px-2 py-1 text-sm" aria-label="Duur in uren" placeholder="uur" />
+            <span className="text-sm text-slate-600 ml-2">× externen</span>
+            <input type="number" min="1" step="1" value={f.aantalExtern ?? 1} onChange={e => setF(p => ({ ...p, aantalExtern: e.target.value }))}
+              className="w-16 border border-slate-300 rounded-lg px-2 py-1 text-sm" aria-label="Aantal externen" />
+            <span className="text-sm text-slate-600">= <strong className="text-ink">{f.geenUren ? '0 uur' : uurTekst(gesprekUren(f))}</strong></span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <span className="text-sm text-slate-600">Telt voor</span>
+            <select value={f.urenCat || catUitKansen(f.kansen)} onChange={e => setF(p => ({ ...p, urenCat: e.target.value }))} className="border border-slate-300 rounded-lg px-2 py-1 text-sm" aria-label="Urencategorie">
+              {UREN_CATS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+            {!f.urenCat && <span className="text-xs text-slate-400">automatisch uit "kans voor"</span>}
+            {f.urenCat && <button type="button" onClick={() => setF(p => ({ ...p, urenCat: '' }))} className="text-xs text-brand hover:underline">weer automatisch</button>}
+          </div>
+          <p className="text-xs text-slate-400 mt-1">Alleen de tijd van externen telt: duur × aantal mensen van buiten Campus Gouda. In halve uren.</p>
+          {f.geenUren && <p className="text-xs text-slate-500 mt-1">Bevestigd: bij dit gesprek horen geen uren (0).</p>}
+          {vraagUren && (
+            <div className="mt-2 border border-amber-300 bg-amber-50 rounded-lg p-3 text-sm space-y-2">
+              <div className="text-amber-900">Bij dit gesprek zijn geen uren ingevuld. Klopt dat?</div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => { setVraagUren(false); onSave({ ...f, duur: 0, geenUren: true, aantalExtern: Math.max(1, parseInt(f.aantalExtern, 10) || 1) }); }} className="px-3 py-1.5 rounded-lg bg-white border border-amber-400 text-amber-900 hover:bg-amber-100">Ja, geen uren (0)</button>
+                <button type="button" onClick={() => setVraagUren(false)} className="px-3 py-1.5 rounded-lg bg-brand text-white hover:bg-branddark">Nee, ik vul de duur in</button>
+              </div>
+            </div>
+          )}
+        </Field>
+      ) : (
+        <p className="sm:col-span-2 text-xs text-slate-400">Gesprek van vóór {CGT.datumDM(UREN_UIT_GESPREKKEN_VANAF)}: de uren hiervan staan in de handmatige urenregistratie.</p>
+      )}
       <Field label="Vervolgacties (met deadline en eigenaar)" full>
         <div className="space-y-2 mb-2">
           {f.acties.map(a => (
@@ -1750,7 +1828,7 @@ function InteractieForm({ initial, kansSoorten = KANS_STANDAARD, onSave, onCance
       </Field>
       <div className="sm:col-span-2 flex justify-end gap-2 pt-2">
         <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">Annuleren</button>
-        <button onClick={() => onSave(f)} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">Opslaan</button>
+        <button onClick={bewaar} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">Opslaan</button>
       </div>
     </div>
   );
@@ -2513,6 +2591,7 @@ function UrenTab({ uren, setUren, targets, setTargets, contacten, externalOrg, c
         <button onClick={() => fileRef.current && fileRef.current.click()} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">Excel-import</button>
         <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleImportExcel} className="hidden" />
         <button onClick={() => setExportOpen(true)} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-50" title="Uitdraai/urenbriefje maken met keuzeopties">Uitdraai / export</button>
+        <span className="text-xs text-slate-500" title="Vul bij een gesprek in Contacten de duur in; die uren verschijnen hier met het label 'uit gesprek'.">Gesprekken met een duur komen hier vanzelf in.</span>
         <button onClick={() => { setEditing(leegUur()); setFormOpen(true); }} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">+ Nieuwe urenregel</button>
       </div>
 
@@ -2617,6 +2696,7 @@ function UrenTab({ uren, setUren, targets, setTargets, contacten, externalOrg, c
                 <tr key={r.id} className={`border-t border-slate-100 ${uit ? 'opacity-50 bg-slate-50' : 'hover:bg-brandlight/40'}`}>
                   <td className="px-3 py-2 font-medium text-ink">
                     <span className="flex items-center gap-1">{r.organisatie || '—'}
+                      {r.bron === 'gesprek' && <Badge className="bg-sky-50 text-regio border-sky-200">uit gesprek</Badge>}
                       {isDubbel(r) && <Badge className="bg-rose-100 text-rose-700 border-rose-200">DUBBEL</Badge>}
                       {auto && !isDubbel(r) && <Badge className="bg-amber-100 text-amber-800 border-amber-200" >DUBBEL (auto)</Badge>}
                     </span>
@@ -2640,8 +2720,12 @@ function UrenTab({ uren, setUren, targets, setTargets, contacten, externalOrg, c
                   <td className="px-3 py-2 text-slate-600">{r.datum || <span className="text-slate-300">—</span>}</td>
                   <td className="px-3 py-2 text-slate-600">{r.interneCollega || '—'}</td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">
-                    <button onClick={() => { setEditing(r); setFormOpen(true); }} className="text-xs text-slate-400 hover:text-brand mr-2">bewerken</button>
-                    <button onClick={() => delUur(r.id)} className="text-xs text-slate-400 hover:text-rose-600">verwijderen</button>
+                    {r.bron === 'gesprek'
+                      ? <button onClick={() => onOpenPersoon && onOpenPersoon(r.verbondenPersoon, r.organisatie)} className="text-xs text-brand hover:underline" title="Deze uren komen uit een gesprek; pas ze daar aan">naar gesprek</button>
+                      : <>
+                          <button onClick={() => { setEditing(r); setFormOpen(true); }} className="text-xs text-slate-400 hover:text-brand mr-2">bewerken</button>
+                          <button onClick={() => delUur(r.id)} className="text-xs text-slate-400 hover:text-rose-600">verwijderen</button>
+                        </>}
                   </td>
                 </tr>
               );
@@ -4597,6 +4681,13 @@ function App() {
     return stored || [];
   });
   const [uren, setUren] = useState(() => loadLS(LS_UREN, []) || []);
+  // de urenverantwoording toont handmatige regels én regels uit gesprekken; alleen de handmatige worden opgeslagen
+  const urenGesprek = useMemo(() => urenUitGesprekken(contacten), [contacten]);
+  const urenAlles = useMemo(() => [...uren, ...urenGesprek], [uren, urenGesprek]);
+  const setUrenHandmatig = (upd) => setUren(prev => {
+    const vol = typeof upd === 'function' ? upd([...prev, ...urenGesprek]) : upd;
+    return (vol || []).filter(r => r.bron !== 'gesprek');
+  });
   const [targets, setTargets] = useState(() => loadLS(LS_TARGETS, {}) || {});
   const [groepen, setGroepen] = useState(() => loadLS(LS_GROEPEN, []) || []);
   const [checklist, setChecklist] = useState(() => loadLS(LS_CHECKLIST, {}) || {});
@@ -5182,7 +5273,7 @@ function App() {
         )}
         {tab === 'contacten' && (
           <ContactenTab
-            contacten={contacten} setContacten={setContacten} trajecten={trajecten} uren={uren}
+            contacten={contacten} setContacten={setContacten} trajecten={trajecten} uren={urenAlles}
             openContactId={openContactId} setOpenContactId={setOpenContactId}
             pendingNewContact={pendingNewContact} clearPendingNewContact={() => setPendingNewContact(null)}
             onOpenTraject={openTrajectFromContact} onOpenUrenOrg={openUrenForOrg}
@@ -5190,7 +5281,7 @@ function App() {
         )}
         {tab === 'uren' && (
           <UrenTab
-            uren={uren} setUren={setUren} targets={targets} setTargets={setTargets} contacten={contacten}
+            uren={urenAlles} setUren={setUrenHandmatig} targets={targets} setTargets={setTargets} contacten={contacten}
             externalOrg={pendingUrenOrg} clearExternalOrg={() => setPendingUrenOrg(null)}
             onOpenPersoon={openContactByName}
           />
