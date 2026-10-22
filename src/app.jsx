@@ -5025,6 +5025,7 @@ function CijfersOverzicht({ trajecten, contacten, groepen, uren }) {
   const huidig = semesterVan(vandaag);
   const [periode, setPeriode] = useState(() => loadLS(LS_CIJFER_PERIODE, { j: huidig.j, s: 0 }) || { j: huidig.j, s: 0 });
   const zetPeriode = p => { setPeriode(p); saveLS(LS_CIJFER_PERIODE, p); };
+  useEffect(() => { if (periode.j && (periode.j < huidig.j - 10 || periode.j > huidig.j + 2)) zetPeriode({ j: huidig.j, s: 0 }); }, []);
   const [blokken, setBlokken] = useState(() => {
     const opgeslagen = loadLS(LS_CIJFER_BLOKKEN, null) || [];
     const bekend = new Set(opgeslagen.map(b => b.id));
@@ -5038,12 +5039,16 @@ function CijfersOverzicht({ trajecten, contacten, groepen, uren }) {
   const [gekopieerd, setGekopieerd] = useState('');
 
   const c = useMemo(() => berekenCijfers({ trajecten, contacten, groepen, uren }, periode), [trajecten, contacten, groepen, uren, periode]);
-  const jaren = useMemo(() => {
+  // schooljaren voor de keuzelijst: alleen realistische jaren (10 terug t/m 2 vooruit);
+  // datums daarbuiten zijn bijna altijd tikfouten (bijv. 3035 i.p.v. 2025) en worden apart gemeld
+  const { jaren, vreemd } = useMemo(() => {
     const s = new Set([huidig.j, semVolgende(huidig).j]);
-    groepen.forEach(g => { const x = semesterVan(CGT.planning(g, vandaag).start); if (x) s.add(x.j); });
-    uren.forEach(r => { const x = semesterVan(r.datum); if (x) s.add(x.j); });
-    contacten.forEach(k => (k.interacties || []).forEach(i => { const x = semesterVan(i.datum); if (x) s.add(x.j); }));
-    return [...s].sort((a, b) => b - a);
+    const vreemd = [];
+    const bekijk = (iso, waar) => { const x = semesterVan(iso); if (!x) return; if (x.j < huidig.j - 10 || x.j > huidig.j + 2) vreemd.push(CGT.datumDM ? iso + ' · ' + waar : waar); else s.add(x.j); };
+    groepen.forEach(g => { const p = CGT.planning(g, vandaag); bekijk(p.start, 'groep ' + (g.groepsnummer || '') + ' ' + (g.titel || '') + ' (start of kick-off)'); });
+    uren.forEach(r => bekijk(r.datum, 'urenregel ' + (r.organisatie || '') + (r.bron === 'gesprek' ? ' (uit gesprek)' : '')));
+    contacten.forEach(k => (k.interacties || []).forEach(i => bekijk(i.datum, 'gesprek met ' + (k.naam || '') + ' (' + (k.organisatie || '') + ')')));
+    return { jaren: [...s].sort((a, b) => b - a), vreemd };
   }, [groepen, uren, contacten]);
   const periodeTekst = !periode.j ? 'alle jaren' : 'schooljaar ' + jaarLabel(periode.j) + (periode.s ? ', semester ' + periode.s : '');
   const toon = (titel, regels) => setLijst({ titel, regels: regels.length ? regels : ['Niets in deze periode.'] });
@@ -5199,6 +5204,13 @@ function CijfersOverzicht({ trajecten, contacten, groepen, uren }) {
           <button type="button" onClick={() => setAanpassen(a => !a)} className={'px-3 py-1.5 rounded-lg border text-sm ' + (aanpassen ? 'bg-brand text-white border-brand' : 'border-slate-300 text-slate-600 hover:bg-slate-50')}>{aanpassen ? '✓ Klaar' : '⚙ Aanpassen'}</button>
         </div>
       </div>
+
+      {vreemd.length > 0 && (
+        <button type="button" onClick={() => toon('Datums met een vreemd jaartal (' + vreemd.length + ')', [...vreemd, 'Verbeter de datum bij de groep, het gesprek of de urenregel; daarna telt hij in het goede schooljaar mee.'])}
+          className="w-full text-left rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 hover:bg-amber-100">
+          ⚠️ {vreemd.length} {vreemd.length === 1 ? 'datum heeft' : 'datums hebben'} een vreemd jaartal (waarschijnlijk een tikfout). Klik om te zien waar.
+        </button>
+      )}
 
       {aanpassen && (
         <div className="bg-white rounded-xl border border-brand/40 p-4">
