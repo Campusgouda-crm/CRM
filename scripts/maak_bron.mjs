@@ -71,8 +71,9 @@ app = eenKeer(app,
 const SENIOREN = [];
 const JUNIOREN = [];
 function vulTeamLijsten(trajecten, team) {
-  const uitTeam = (re) => (team || []).filter(p => re.test(String(p.rol || ''))).map(p => String(p.naam || '').trim());
-  const uniek = (k, re) => [...new Set([...uitTeam(re), ...(trajecten || []).map(t => String(t[k] || '').trim())].filter(Boolean))]
+  const uitTeam = (re) => (team || []).filter(p => re.test(String(p.rol || ''))).map(p => String(p.naam || '').trim()).filter(Boolean);
+  // staat de rol in het team, dan alleen het team (één schrijfwijze); anders wat er in de trajecten staat
+  const uniek = (k, re) => [...new Set(uitTeam(re).length ? uitTeam(re) : (trajecten || []).map(t => String(t[k] || '').trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, 'nl'));
   SENIOREN.splice(0, SENIOREN.length, ...uniek('senior', /senior/i));
   JUNIOREN.splice(0, JUNIOREN.length, ...uniek('junior', /junior/i));

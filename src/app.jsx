@@ -24,8 +24,9 @@ const TRAJECT_TYPES = ['Nieuw traject', 'Eerder onderzocht'];
 const SENIOREN = [];
 const JUNIOREN = [];
 function vulTeamLijsten(trajecten, team) {
-  const uitTeam = (re) => (team || []).filter(p => re.test(String(p.rol || ''))).map(p => String(p.naam || '').trim());
-  const uniek = (k, re) => [...new Set([...uitTeam(re), ...(trajecten || []).map(t => String(t[k] || '').trim())].filter(Boolean))]
+  const uitTeam = (re) => (team || []).filter(p => re.test(String(p.rol || ''))).map(p => String(p.naam || '').trim()).filter(Boolean);
+  // staat de rol in het team, dan alleen het team (één schrijfwijze); anders wat er in de trajecten staat
+  const uniek = (k, re) => [...new Set(uitTeam(re).length ? uitTeam(re) : (trajecten || []).map(t => String(t[k] || '').trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, 'nl'));
   SENIOREN.splice(0, SENIOREN.length, ...uniek('senior', /senior/i));
   JUNIOREN.splice(0, JUNIOREN.length, ...uniek('junior', /junior/i));
@@ -42,6 +43,52 @@ function heeftNaam(tekst, naam) { const n = String(naam || '').trim().toLowerCas
 function wisselNaam(tekst, naam) {
   const lijst = naamLijst(tekst);
   return (heeftNaam(tekst, naam) ? lijst.filter(x => x.toLowerCase() !== naam.toLowerCase()) : [...lijst, naam]).join(', ');
+}
+// alle plekken waar een naam van een collega staat
+const normNaam = n => String(n || '').trim().replace(/\s+/g, ' ').toLowerCase();
+function teamNaamVoor(naam, teamNamen) {
+  const k = normNaam(naam); if (!k) return '';
+  const exact = (teamNamen || []).find(n => normNaam(n) === k); if (exact) return exact;
+  const voor = k.split(' ')[0];
+  const opVoornaam = (teamNamen || []).filter(n => normNaam(n).split(' ')[0] === voor);
+  return opVoornaam.length === 1 ? opVoornaam[0] : '';
+}
+// loopt langs elk naamveld; fn(waarde) geeft de nieuwe waarde terug
+function overNaamvelden(d, fn) {
+  const st = (o, k) => { const oud = o[k]; if (typeof oud !== 'string' || !oud) return o; const nw = fn(oud); return nw === oud ? o : { ...o, [k]: nw }; };
+  return {
+    trajecten: (d.trajecten || []).map(t => st(st(t, 'senior'), 'junior')),
+    groepen: (d.groepen || []).map(g => {
+      let x = st(g, 'contactCG');
+      if (Array.isArray(x.taken)) x = { ...x, taken: x.taken.map(t => st(t, 'door')) };
+      if (Array.isArray(x.aantekeningen)) x = { ...x, aantekeningen: x.aantekeningen.map(a => st(a, 'door')) };
+      return x;
+    }),
+    contacten: (d.contacten || []).map(c => {
+      let x = st(c, 'eigenaar');
+      if (Array.isArray(x.interacties)) x = { ...x, interacties: x.interacties.map(i => {
+        let y = st(i, 'aanwezig');
+        if (Array.isArray(y.acties)) y = { ...y, acties: y.acties.map(a => st(a, 'eigenaar')) };
+        return y;
+      }) };
+      return x;
+    }),
+    uren: (d.uren || []).map(r => st(r, 'interneCollega')),
+  };
+}
+// telt alle namen (per deel, dus "naam1, naam2" telt twee namen)
+function namenInGegevens(d) {
+  const tel = new Map();
+  overNaamvelden(d, v => { naamLijst(v).forEach(n => tel.set(n, (tel.get(n) || 0) + 1)); return v; });
+  return tel;
+}
+// vervangt namen volgens een tabel { 'oude schrijfwijze': 'teamnaam' }
+function vervangNamen(v, tabel) {
+  const delen = naamLijst(v);
+  if (!delen.length) return v;
+  const nieuw = delen.map(n => tabel[n] || n);
+  if (nieuw.every((n, i) => n === delen[i])) return v;
+  return [...new Set(nieuw)].join(', ');
 }
 function sorteerTeam(team) {
   const plek = (rol) => { const i = TEAM_ROLLEN.findIndex(r => r.toLowerCase() === String(rol || '').trim().toLowerCase()); return i < 0 ? TEAM_ROLLEN.length : i; };
@@ -3349,7 +3396,7 @@ function GroepForm({ initial, trajecten, contacten, groepen = [], onSave, onCanc
   });
   const [manualNr, setManualNr] = useState(!isNieuw); // bestaand nummer = handmatig behouden
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
-  const collegas = useMemo(() => [...new Set([...TEAM_NAMEN, ...contacten.map(c => c.naam).filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'nl')), [contacten]);
+  const collegas = useMemo(() => TEAM_NAMEN.length ? [...TEAM_NAMEN] : [...new Set(contacten.map(c => c.naam).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'nl')), [contacten]);
 
   // bij themawijziging het automatische nummer bijwerken (tenzij handmatig aangepast)
   const setThema = (e) => {
@@ -4156,7 +4203,51 @@ function koppelFoutTekst(e) {
 }
 
 // Team en rollen beheren (staat in de gedeelde gegevens, dus iedereen ziet hetzelfde team)
-function TeamBeheer({ team, onSave, onCancel }) {
+function NamenGelijktrekken({ team, gegevens, onToepassen }) {
+  const teamNamen = (team || []).map(p => String(p.naam || '').trim()).filter(Boolean);
+  const [rijen, setRijen] = useState(null); // [{ naam, aantal, naar }]
+  const zoek = () => {
+    const tel = namenInGegevens(gegevens);
+    setRijen([...tel].filter(([n]) => !teamNamen.includes(n))
+      .map(([naam, aantal]) => ({ naam, aantal, naar: teamNaamVoor(naam, teamNamen) }))
+      .sort((a, b) => (b.naar ? 1 : 0) - (a.naar ? 1 : 0) || a.naam.localeCompare(b.naam, 'nl')));
+  };
+  const tabel = Object.fromEntries((rijen || []).filter(r => r.naar).map(r => [r.naam, r.naar]));
+  const aantalTeVervangen = (rijen || []).filter(r => r.naar).reduce((t, r) => t + r.aantal, 0);
+  if (!teamNamen.length) return null;
+  return (
+    <div className="pt-3 border-t border-slate-100 space-y-2">
+      <div className="text-sm font-semibold text-ink">Namen gelijktrekken</div>
+      <p className="text-xs text-slate-500">Zoekt in trajecten, groepen, contacten, gesprekken en uren naar andere schrijfwijzen van teamnamen, bijvoorbeeld een kleine letter of een achternaam erbij, en zet ze om naar de naam uit het team.</p>
+      {!rijen && <button type="button" onClick={zoek} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">Zoek andere schrijfwijzen</button>}
+      {rijen && rijen.length === 0 && <p className="text-sm text-brand">✓ Alle namen in de gegevens zijn al gelijk aan het team.</p>}
+      {rijen && rijen.length > 0 && (
+        <>
+          <div className="max-h-64 overflow-y-auto border border-slate-100 rounded-lg divide-y divide-slate-100">
+            {rijen.map(r => (
+              <div key={r.naam} className="flex flex-wrap items-center gap-2 px-2 py-1.5 text-sm">
+                <span className="flex-1 min-w-[120px] text-slate-700">{r.naam} <span className="text-xs text-slate-400">({r.aantal}×)</span></span>
+                <span className="text-slate-400">→</span>
+                <select value={r.naar} onChange={e => setRijen(prev => prev.map(x => x.naam === r.naam ? { ...x, naar: e.target.value } : x))}
+                  className="border border-slate-300 rounded-lg px-2 py-1 text-sm" aria-label={'Teamnaam voor ' + r.naam}>
+                  <option value="">laten staan</option>
+                  {teamNamen.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" disabled={!aantalTeVervangen} onClick={() => { const n = onToepassen(tabel); alert(n + ' plek(ken) aangepast. De namen zijn nu overal gelijk aan het team.'); setRijen(null); }}
+              className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark disabled:opacity-40">Toepassen ({aantalTeVervangen})</button>
+            <span className="text-xs text-slate-400">Namen van buiten het team (bijv. oud-collega's) kun je laten staan.</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TeamBeheer({ team, onSave, onCancel, gegevens, onGelijktrekken }) {
   const [rijen, setRijen] = useState(() => sorteerTeam(team).map(p => ({ ...p })));
   const zet = (id, k, v) => setRijen(prev => prev.map(r => r.id === id ? { ...r, [k]: v } : r));
   const voegToe = () => setRijen(prev => [...prev, { id: uid(), naam: '', rol: '' }]);
@@ -4177,6 +4268,7 @@ function TeamBeheer({ team, onSave, onCancel }) {
       </div>
       <datalist id="cg-team-rollen">{TEAM_ROLLEN.map(x => <option key={x} value={x} />)}</datalist>
       <button type="button" onClick={voegToe} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">+ Persoon toevoegen</button>
+      {gegevens && onGelijktrekken && <NamenGelijktrekken team={team} gegevens={gegevens} onToepassen={onGelijktrekken} />}
       <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
         <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">Annuleren</button>
         <button type="button" onClick={opslaan} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">Opslaan</button>
@@ -4305,6 +4397,12 @@ function App() {
   useEffect(() => saveLS(LS_GROEPEN, groepen), [groepen]);
   useEffect(() => saveLS(LS_CHECKLIST, checklist), [checklist]);
   useEffect(() => saveLS(LS_TEAM, team), [team]);
+  // "Jouw naam" in dezelfde schrijfwijze als in het team
+  useEffect(() => {
+    const mijn = loadLS(LS_MIJNNAAM, '');
+    const goed = teamNaamVoor(mijn, TEAM_NAMEN);
+    if (mijn && goed && goed !== mijn && normNaam(goed) === normNaam(mijn)) saveLS(LS_MIJNNAAM, goed);
+  }, [team]);
   useEffect(() => saveLS(LS_FEEDBACK, feedback), [feedback]);
 
   function applyBundle(data) {
@@ -4318,7 +4416,8 @@ function App() {
     if (TEST_GEBRUIKER && !loadLS(LS_MIJNNAAM, '')) saveLS(LS_MIJNNAAM, TEST_GEBRUIKER);
     let naam = TEST_GEBRUIKER || loadLS(LS_MIJNNAAM, '');
     if (!naam) {
-      naam = ((window.prompt('Wat is je naam? Collega\'s zien dan wie wat heeft gewijzigd.') || '').trim()) || 'Collega';
+      const antwoord = ((window.prompt('Wat is je naam? Collega\'s zien dan wie wat heeft gewijzigd.' + (TEAM_NAMEN.length ? '\n(Zoals in het team: ' + TEAM_NAMEN.join(', ') + ')' : '')) || '').trim());
+      naam = teamNaamVoor(antwoord, TEAM_NAMEN) || antwoord || 'Collega';
       saveLS(LS_MIJNNAAM, naam);
     }
     return { id: TEST_GEBRUIKER ? 'test-' + CGSYNC.veiligeNaam(TEST_GEBRUIKER).toLowerCase() : id, naam };
@@ -4832,7 +4931,15 @@ function App() {
       </footer>
 
       <Modal open={teamOpen} onClose={() => setTeamOpen(false)} title="Team en rollen">
-        {teamOpen && <TeamBeheer team={team} onSave={(t) => { setTeam(t); setTeamOpen(false); }} onCancel={() => setTeamOpen(false)} />}
+        {teamOpen && <TeamBeheer team={team} onSave={(t) => { setTeam(t); setTeamOpen(false); }} onCancel={() => setTeamOpen(false)}
+          gegevens={{ trajecten, groepen, contacten, uren }}
+          onGelijktrekken={(tabel) => {
+            let n = 0;
+            const nieuw = overNaamvelden({ trajecten, groepen, contacten, uren }, v => { const w = vervangNamen(v, tabel); if (w !== v) n++; return w; });
+            setTrajecten(nieuw.trajecten); setGroepen(nieuw.groepen); setContacten(nieuw.contacten); setUren(nieuw.uren);
+            const mijn = loadLS(LS_MIJNNAAM, ''); if (mijn && tabel[mijn]) saveLS(LS_MIJNNAAM, tabel[mijn]);
+            return n;
+          }} />}
       </Modal>
       <datalist id="cg-team">{TEAM_NAMEN.map(n => <option key={n} value={n} />)}</datalist>
 
