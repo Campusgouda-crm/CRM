@@ -147,6 +147,8 @@ const LS_TARGETS = 'cgt_uren_targets_v1';
 const LS_GROEPEN = 'cgt_groepen_v1';
 const LS_CHECKLIST = 'cgt_checklist_v1';
 const LS_TEAM = 'cgt_team_v1';
+// laatste stand die gelijk was aan de gedeelde map (om wijzigingen van tussendoor niet kwijt te raken)
+const LS_SYNC_STAND = 'cgt_sync_stand_v1';
 const LS_FEEDBACK = 'cgt_feedback_v1';
 
 // Checklist per traject — fases met items (volgorde = weergavevolgorde)
@@ -3483,34 +3485,137 @@ function GroepForm({ initial, trajecten, contacten, groepen = [], onSave, onCanc
   );
 }
 
-// Aantekeningen bij een groep of bij studenten: kick-off, voortgangsgesprekken, presentaties
-const AANTEKENING_SOORTEN = ['Kick-off', 'Voortgangsgesprek', 'Tussenpresentatie', 'Eindpresentatie', 'Overig'];
+// Aantekeningen bij een groep: altijd voor de hele groep, met een vast format per soort bijeenkomst.
+// Velden: vink (ja/nee; ref = checklistpunt dat meteen wordt afgevinkt), stoplicht, keuze, tekst, info (berekend).
+const AANTEKENING_FORMATS = {
+  'Kennismaking': [
+    { k: 'frequentie', t: 'vink', label: 'Afgesproken hoe vaak en wanneer we elkaar spreken', ref: ['F1I0'] },
+    { k: 'spoed', t: 'vink', label: 'Nummers voor spoedgevallen uitgewisseld', ref: ['F1I1'] },
+    { k: 'voorgaand', t: 'vink', label: 'Documentatie van voorgaande groepen besproken', ref: ['F1I2'] },
+    { k: 'voorbereiden', t: 'vink', label: 'Opdracht gegeven: info van voorgaande groepen doornemen en voorbereid naar de kick-off komen', ref: ['F1I3', 'F1I4'] },
+    { k: 'pages', t: 'vink', label: 'Afgesproken dat ze Pages bijhouden voor de voortgangsgesprekken', ref: ['F1I5'] },
+    { k: 'indruk', t: 'tekst', label: 'Eerste indruk van de groep' },
+    { k: 'info', t: 'tekst', label: 'Vragen en informatiebehoeften' },
+    { k: 'afspraken', t: 'tekst', label: 'Afspraken en vervolgstappen' },
+  ],
+  'Kick-off': [
+    { k: 'presentaties', t: 'info', bron: 'presentaties' },
+    { k: 'vastgelegd', t: 'vink', label: 'Tussentijdse en eindpresentatie vastgelegd (datum, tijd en locatie)', ref: ['F2I0'] },
+    { k: 'herhaald', t: 'vink', label: 'Studenten hebben de inhoudelijke afspraken herhaald', ref: ['F2I1'] },
+    { k: 'contactOG', t: 'vink', label: 'Afgesproken hoe en hoe vaak er contact is met de opdrachtgever', ref: ['F2I2'] },
+    { k: 'agenda', t: 'vink', label: 'Check-ins met de groep staan in de agenda\'s', ref: ['F3I1'] },
+    { k: 'opdracht', t: 'tekst', label: 'Opdracht en verwachtingen van de opdrachtgever' },
+    { k: 'indruk', t: 'tekst', label: 'Indruk van de groep en de samenwerking' },
+    { k: 'info', t: 'tekst', label: 'Vragen en informatiebehoeften' },
+    { k: 'afspraken', t: 'tekst', label: 'Afspraken en vervolgstappen' },
+  ],
+  'Voortgangsgesprek': [
+    { k: 'checklistStand', t: 'info', bron: 'checklist' },
+    { k: 'checklist', t: 'vink', label: 'Checklist helemaal ingevuld en bijgewerkt' },
+    { k: 'agenda', t: 'vink', label: 'Alle afspraken staan in de agenda (check-ins, presentaties)', ref: ['F3I1'] },
+    { k: 'stand', t: 'stoplicht', label: 'Hoe staan ze ervoor?' },
+    { k: 'samenwerking', t: 'tekst', label: 'Hoe gaat de samenwerking in de groep?' },
+    { k: 'info', t: 'tekst', label: 'Informatiebehoeften: wat hebben ze nodig van ons, de opdrachtgever of de docent?' },
+    { k: 'testTussen', t: 'vink', label: 'Test-tussentijdse presentatie gepland: 1 week vóór de tussentijdse presentatie, tijdens een voortgangsgesprek', ref: ['F3I2'], info: 'testTussen', alleen: 'voorTussen' },
+    { k: 'testEind', t: 'vink', label: 'Test-eindpresentatie gepland: 1 week vóór de eindpresentatie', ref: ['F5I1'], info: 'testEind', alleen: 'naTussen' },
+    { k: 'kerngroep', t: 'vink', label: 'Betrokkenheid van de kerngroepleden besproken', ref: ['F3I3'] },
+    { k: 'afspraken', t: 'tekst', label: 'Afspraken en vervolgstappen' },
+  ],
+  'Tussenpresentatie': [
+    { k: 'go', t: 'keuze', label: 'Go of no-go van het kernteam voor de richting', opties: ['Go', 'No-go', 'Twijfel'], ref: ['F4I0'] },
+    { k: 'verwachting', t: 'vink', label: 'Verwachtingen over het eindproduct uitgesproken', ref: ['F4I1'] },
+    { k: 'afsprakenLaatste', t: 'vink', label: 'Afspraken vastgelegd, o.a. hoe vaak er contact is in de laatste fase', ref: ['F4I2'] },
+    { k: 'testEind', t: 'vink', label: 'Moment om de eindpresentatie te oefenen (met feedback) bepaald', ref: ['F5I1'], info: 'testEind' },
+    { k: 'feedback', t: 'tekst', label: 'Feedback van de opdrachtgever en de docent' },
+    { k: 'indruk', t: 'tekst', label: 'Hoe ging de presentatie? Indruk van de groep' },
+    { k: 'afspraken', t: 'tekst', label: 'Afspraken en vervolgstappen' },
+  ],
+  'Eindpresentatie': [
+    { k: 'overdracht', t: 'vink', label: 'Vorm van overdracht van rapportage en prototype afgesproken', ref: ['F6I0'] },
+    { k: 'gebruik', t: 'vink', label: 'Afgesproken wat Campus Gouda met de eindproducten mag doen', ref: ['F6I1'] },
+    { k: 'alumni', t: 'vink', label: 'Alumninetwerk van Campus Gouda geïntroduceerd', ref: ['F6I2'] },
+    { k: 'bedankje', t: 'vink', label: 'Bedankje gegeven namens Campus Gouda', ref: ['F6I3'] },
+    { k: 'compleet', t: 'vink', label: 'Alle producten compleet opgeleverd', ref: ['F7I2'] },
+    { k: 'reactie', t: 'tekst', label: 'Reactie van de opdrachtgever op het eindresultaat' },
+    { k: 'kansen', t: 'tekst', label: 'Vervolgkansen (nieuw traject, challenge, stage, …)' },
+    { k: 'lessen', t: 'tekst', label: 'Lessen voor volgende groepen' },
+    { k: 'afspraken', t: 'tekst', label: 'Afspraken en vervolgstappen' },
+  ],
+  'Overig': [
+    { k: 'tekst', t: 'tekst', label: 'Aantekening' },
+  ],
+};
+const AANTEKENING_SOORTEN = Object.keys(AANTEKENING_FORMATS);
 const AANTEKENING_KLEUR = {
+  'Kennismaking': 'bg-slate-100 text-slate-700 border-slate-200',
   'Kick-off': 'bg-sky-50 text-sky-700 border-sky-200', 'Voortgangsgesprek': 'bg-brandlight text-branddark border-brand/30',
   'Tussenpresentatie': 'bg-amber-50 text-amber-700 border-amber-200', 'Eindpresentatie': 'bg-violet-50 text-violet-700 border-violet-200',
   'Overig': 'bg-slate-100 text-slate-600 border-slate-200',
 };
-function GroepAantekeningen({ g, onUpdate }) {
-  const studenten = g.studenten || [];
-  const alle = (g.aantekeningen || []).slice().sort((a, b) => String(b.datum).localeCompare(String(a.datum)) || String(b.gemaakt || '').localeCompare(String(a.gemaakt || '')));
-  const [form, setForm] = useState(null); // { soort, datum, tekst, studentIds }
+const STOPLICHT = [
+  { w: 'goed', label: 'Op koers', kleur: 'bg-emerald-50 text-emerald-700 border-emerald-300' },
+  { w: 'aandacht', label: 'Aandacht nodig', kleur: 'bg-amber-50 text-amber-700 border-amber-300' },
+  { w: 'zorgen', label: 'Zorgen', kleur: 'bg-rose-50 text-rose-700 border-rose-300' },
+];
+// is een veld van het format nu van toepassing? (test-tussen vóór de tussenpresentatie, test-eind daarna)
+function veldVanToepassing(v, p, vandaag) {
+  if (v.alleen === 'voorTussen') return !(p.tussen && p.tussen < vandaag);
+  if (v.alleen === 'naTussen') return !!(p.tussen && p.tussen < vandaag);
+  return true;
+}
+function veldIngevuld(v, w) { return v.t === 'tekst' ? !!String(w || '').trim() : !!w; }
+
+function AantekeningInfo({ bron, g, p, checklistState }) {
+  const kader = 'text-xs rounded-lg px-3 py-2 bg-white border border-slate-200 text-slate-600';
+  if (bron === 'checklist') {
+    const v = checklistVoortgang(checklistState);
+    const open = CHECKLIST.map((f, fi) => ({ fase: f.fase, open: f.items.filter((_, ii) => !CGT.itemStatus(checklistState, fi, ii)).length })).filter(x => x.open);
+    return <div className={kader}>Checklist: <strong>{v.done} van {v.total}</strong> klaar.{open.length ? ' Nog open: ' + open.slice(0, 3).map(x => x.fase + ' (' + x.open + ')').join(', ') + (open.length > 3 ? ', …' : '') : ' Alles afgevinkt.'}</div>;
+  }
+  if (bron === 'presentaties') {
+    return <div className={kader}>Tussentijdse presentatie: <strong>{p.tussen ? CGT.datumDM(p.tussen) : 'nog niet vastgelegd'}</strong> · Eindpresentatie: <strong>{p.eind ? CGT.datumDM(p.eind) : 'nog niet vastgelegd'}</strong></div>;
+  }
+  if (bron === 'testTussen') {
+    return <div className="text-xs text-slate-500 mt-1">{p.tussen ? <>Tussentijdse presentatie {CGT.datumDM(p.tussen)} → test-presentatie in de week van <strong>{CGT.datumDM(CGT.addDays(p.tussen, -7))}</strong>.</> : 'Leg eerst de datum van de tussentijdse presentatie vast (Planning).'}</div>;
+  }
+  if (bron === 'testEind') {
+    return <div className="text-xs text-slate-500 mt-1">{p.eind ? <>Eindpresentatie {CGT.datumDM(p.eind)} → oefenen in de week van <strong>{CGT.datumDM(CGT.addDays(p.eind, -7))}</strong>.</> : 'Leg eerst de datum van de eindpresentatie vast (Planning).'}</div>;
+  }
+  return null;
+}
+
+function GroepAantekeningen({ g, p, checklistState, onZetChecklist, onUpdate }) {
+  const vandaag = CGT.vandaagISO();
+  const alle = (g.aantekeningen || []).slice().sort((x, y) => String(y.datum).localeCompare(String(x.datum)) || String(y.gemaakt || '').localeCompare(String(x.gemaakt || '')));
+  const [form, setForm] = useState(null); // { soort, datum, door, velden }
   const [bewerkId, setBewerkId] = useState(null);
   const [filter, setFilter] = useState('');
-  const naamVan = id => (studenten.find(st => st.id === id) || {}).naam || 'oud-student';
-  const start = (soort) => { setBewerkId(null); setForm({ soort, datum: CGT.vandaagISO(), tekst: '', studentIds: [] }); };
-  const bewerk = (a) => { setBewerkId(a.id); setForm({ soort: a.soort, datum: a.datum, tekst: a.tekst, studentIds: a.studentIds || [] }); };
-  const wissel = (id) => setForm(f => ({ ...f, studentIds: f.studentIds.includes(id) ? f.studentIds.filter(x => x !== id) : [...f.studentIds, id] }));
+  const start = (soort) => { setBewerkId(null); setForm({ soort, datum: vandaag, door: teamNaamVoor(mijnNaam(), TEAM_NAMEN) || mijnNaam(), velden: {} }); };
+  const bewerk = (a) => { setBewerkId(a.id); setForm({ soort: a.soort, datum: a.datum, door: a.door || '', velden: { ...(a.velden || {}), ...(a.tekst && !(a.velden || {}).tekst ? { tekst: a.tekst } : {}) } }); };
+  const zetVeld = (k, w) => setForm(f => ({ ...f, velden: { ...f.velden, [k]: w } }));
+  const format = form ? (AANTEKENING_FORMATS[form.soort] || AANTEKENING_FORMATS['Overig']) : [];
+  const iets = form && format.some(v => veldIngevuld(v, form.velden[v.k]) || (v.t === 'stoplicht' && String(form.velden[v.k + 'Toelichting'] || '').trim()));
   const opslaan = () => {
-    const tekst = String(form.tekst || '').trim();
-    if (!tekst) return;
-    if (bewerkId) onUpdate(x => ({ ...x, aantekeningen: (x.aantekeningen || []).map(a => a.id === bewerkId ? { ...a, ...form, tekst, gewijzigd: new Date().toISOString() } : a) }));
-    else onUpdate(x => ({ ...x, aantekeningen: [...(x.aantekeningen || []), { id: uid(), ...form, tekst, door: mijnNaam(), gemaakt: new Date().toISOString() }] }));
+    if (!iets) return;
+    const velden = {};
+    format.forEach(v => {
+      const w = form.velden[v.k];
+      if (v.t !== 'info' && veldIngevuld(v, w)) velden[v.k] = v.t === 'tekst' ? String(w).trim() : w;
+      if (v.t === 'stoplicht') { const tl = String(form.velden[v.k + 'Toelichting'] || '').trim(); if (tl) velden[v.k + 'Toelichting'] = tl; }
+    });
+    const basis = { soort: form.soort, datum: form.datum, door: String(form.door || '').trim(), velden };
+    if (bewerkId) onUpdate(x => ({ ...x, aantekeningen: (x.aantekeningen || []).map(a => a.id === bewerkId ? { ...a, ...basis, tekst: '', studentIds: [], gewijzigd: new Date().toISOString() } : a) }));
+    else onUpdate(x => ({ ...x, aantekeningen: [...(x.aantekeningen || []), { id: uid(), ...basis, gemaakt: new Date().toISOString() }] }));
+    // wat hier met "ja" is afgevinkt en ook in de checklist staat, meteen afvinken
+    if (onZetChecklist) format.forEach(v => { if ((v.t === 'vink' && velden[v.k] === 'ja') || (v.t === 'keuze' && velden[v.k])) (v.ref || []).forEach(r => { if (!(checklistState || {})[r]) onZetChecklist(r, true); }); });
     setForm(null); setBewerkId(null);
   };
   const weg = (id) => { if (confirm('Deze aantekening verwijderen?')) onUpdate(x => ({ ...x, aantekeningen: (x.aantekeningen || []).filter(a => a.id !== id) })); };
-  const zichtbaar = !filter ? alle : filter.startsWith('soort:') ? alle.filter(a => a.soort === filter.slice(6)) : alle.filter(a => (a.studentIds || []).includes(filter.slice(8)));
+  const zichtbaar = filter ? alle.filter(a => a.soort === filter) : alle;
   const telSoort = sr => alle.filter(a => a.soort === sr).length;
-  const telStudent = id => alle.filter(a => (a.studentIds || []).includes(id)).length;
+  const knopCls = (aan, kleur) => 'px-2.5 py-0.5 rounded-full border text-xs ' + (aan ? (kleur || 'bg-brand text-white border-brand') : 'bg-white border-slate-300 text-slate-600 hover:border-brand');
+  const alAfgevinkt = v => (v.ref || []).length && (v.ref || []).every(r => (checklistState || {})[r]);
+
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
@@ -3518,8 +3623,7 @@ function GroepAantekeningen({ g, onUpdate }) {
         {alle.length > 0 && (
           <select value={filter} onChange={e => setFilter(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-600" aria-label="Aantekeningen filteren">
             <option value="">Alle aantekeningen</option>
-            <optgroup label="Soort">{AANTEKENING_SOORTEN.filter(telSoort).map(sr => <option key={sr} value={'soort:' + sr}>{sr} ({telSoort(sr)})</option>)}</optgroup>
-            {studenten.some(st => telStudent(st.id)) && <optgroup label="Student">{studenten.filter(st => telStudent(st.id)).map(st => <option key={st.id} value={'student:' + st.id}>{st.naam || 'student'} ({telStudent(st.id)})</option>)}</optgroup>}
+            {AANTEKENING_SOORTEN.filter(telSoort).map(sr => <option key={sr} value={sr}>{sr} ({telSoort(sr)})</option>)}
           </select>
         )}
       </div>
@@ -3531,52 +3635,101 @@ function GroepAantekeningen({ g, onUpdate }) {
         </div>
       )}
       {form && (
-        <div className="border border-brand/30 bg-brandlight/30 rounded-lg p-3 mb-3 space-y-2">
-          <div className="flex flex-wrap gap-2">
-            <select value={form.soort} onChange={e => setForm(f => ({ ...f, soort: e.target.value }))} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white" aria-label="Soort aantekening">
-              {AANTEKENING_SOORTEN.map(sr => <option key={sr}>{sr}</option>)}
-            </select>
-            <input type="date" value={form.datum} onChange={e => setForm(f => ({ ...f, datum: e.target.value }))} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white" aria-label="Datum" />
+        <div className="border border-brand/30 bg-brandlight/30 rounded-lg p-3 mb-3 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge className={AANTEKENING_KLEUR[form.soort] || AANTEKENING_KLEUR['Overig']}>{form.soort}</Badge>
+            <span className="text-xs text-slate-500">voor de hele groep</span>
+            <input type="date" value={form.datum} onChange={e => setForm(f => ({ ...f, datum: e.target.value }))} className="ml-auto border border-slate-300 rounded-lg px-2 py-1 text-sm bg-white" aria-label="Datum" />
           </div>
-          {studenten.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 text-xs">
-              <span className="text-slate-500 mr-1">Over:</span>
-              <button type="button" onClick={() => setForm(f => ({ ...f, studentIds: [] }))}
-                className={'px-2 py-0.5 rounded-full border ' + (form.studentIds.length === 0 ? 'bg-brand text-white border-brand' : 'bg-white border-slate-300 text-slate-600')}>Hele groep</button>
-              {studenten.map(st => (
-                <button key={st.id} type="button" onClick={() => wissel(st.id)}
-                  className={'px-2 py-0.5 rounded-full border ' + (form.studentIds.includes(st.id) ? 'bg-brand text-white border-brand' : 'bg-white border-slate-300 text-slate-600')}>{st.naam || 'student'}</button>
-              ))}
-            </div>
-          )}
-          <textarea value={form.tekst} onChange={e => setForm(f => ({ ...f, tekst: e.target.value }))} rows={4} autoFocus
-            placeholder={form.soort === 'Voortgangsgesprek' ? 'Hoe gaat het? Afspraken, zorgen, vervolgstappen…' : 'Wat viel op? Feedback, afspraken, vervolgstappen…'}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40" aria-label="Aantekening" />
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-slate-500 mr-1">Gemaakt door:</span>
+            {TEAM_NAMEN.map(n => <button key={n} type="button" onClick={() => setForm(f => ({ ...f, door: n }))} className={knopCls(form.door === n)}>{n}</button>)}
+            {!TEAM_NAMEN.length && <input value={form.door} onChange={e => setForm(f => ({ ...f, door: e.target.value }))} className="border border-slate-300 rounded-lg px-2 py-1 text-sm bg-white" placeholder="naam" aria-label="Gemaakt door" />}
+          </div>
+          {format.filter(v => veldVanToepassing(v, p, vandaag)).map(v => {
+            const w = form.velden[v.k];
+            if (v.t === 'info') return <AantekeningInfo key={v.k} bron={v.bron} g={g} p={p} checklistState={checklistState} />;
+            if (v.t === 'vink' || v.t === 'keuze') return (
+              <div key={v.k} className="text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="flex-1 min-w-[200px] text-slate-700">{v.label}</span>
+                  {(v.t === 'vink' ? [['ja', 'Ja'], ['nee', 'Nee']] : v.opties.map(o => [o, o])).map(([waarde, tekst]) => (
+                    <button key={waarde} type="button" onClick={() => zetVeld(v.k, w === waarde ? '' : waarde)}
+                      className={knopCls(w === waarde, waarde === 'nee' || waarde === 'No-go' ? 'bg-rose-500 text-white border-rose-500' : waarde === 'Twijfel' ? 'bg-amber-500 text-white border-amber-500' : '')}>{tekst}</button>
+                  ))}
+                </div>
+                {v.info && <AantekeningInfo bron={v.info} g={g} p={p} checklistState={checklistState} />}
+                {(v.ref || []).length > 0 && <div className="text-[11px] text-slate-400 mt-0.5">{alAfgevinkt(v) ? '✓ staat al afgevinkt in de checklist' : 'Bij "' + (v.t === 'keuze' ? 'een keuze' : 'Ja') + '" wordt dit ook afgevinkt in de checklist'}</div>}
+              </div>
+            );
+            if (v.t === 'stoplicht') return (
+              <div key={v.k} className="text-sm space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="flex-1 min-w-[200px] text-slate-700">{v.label}</span>
+                  {STOPLICHT.map(o => <button key={o.w} type="button" onClick={() => zetVeld(v.k, w === o.w ? '' : o.w)} className={knopCls(w === o.w, o.kleur)}>{o.label}</button>)}
+                </div>
+                <textarea value={form.velden[v.k + 'Toelichting'] || ''} onChange={e => zetVeld(v.k + 'Toelichting', e.target.value)} rows={2} placeholder="Toelichting"
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40" aria-label={v.label + ' toelichting'} />
+              </div>
+            );
+            return (
+              <div key={v.k} className="text-sm">
+                <label className="block text-slate-700 mb-1">{v.label}</label>
+                <textarea value={w || ''} onChange={e => zetVeld(v.k, e.target.value)} rows={v.k === 'tekst' ? 5 : 2}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40" aria-label={v.label} />
+              </div>
+            );
+          })}
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => { setForm(null); setBewerkId(null); }} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm bg-white hover:bg-slate-50">Annuleren</button>
-            <button type="button" onClick={opslaan} disabled={!String(form.tekst || '').trim()} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark disabled:opacity-40">{bewerkId ? 'Opslaan' : 'Toevoegen'}</button>
+            <button type="button" onClick={opslaan} disabled={!iets} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark disabled:opacity-40">{bewerkId ? 'Opslaan' : 'Toevoegen'}</button>
           </div>
         </div>
       )}
       {zichtbaar.length === 0 ? (
-        !form && <p className="text-sm text-slate-300">{alle.length ? 'Geen aantekeningen met dit filter.' : 'Nog geen aantekeningen. Kies hierboven wat voor gesprek of moment het was.'}</p>
+        !form && <p className="text-sm text-slate-300">{alle.length ? 'Geen aantekeningen met dit filter.' : 'Nog geen aantekeningen. Kies hierboven wat voor bijeenkomst het was.'}</p>
       ) : (
         <div className="space-y-2">
-          {zichtbaar.map(a => (
-            <div key={a.id} className="border border-slate-100 rounded-lg p-2.5 text-sm">
-              <div className="flex flex-wrap items-center gap-2 mb-1">
-                <Badge className={AANTEKENING_KLEUR[a.soort] || AANTEKENING_KLEUR['Overig']}>{a.soort}</Badge>
-                <span className="text-xs text-slate-500">{a.datum ? CGT.datumDM(a.datum) : ''}</span>
-                <span className="text-xs text-slate-500">· {(a.studentIds || []).length ? (a.studentIds || []).map(naamVan).join(', ') : 'hele groep'}</span>
-                <span className="ml-auto flex gap-2 text-xs">
-                  <button type="button" onClick={() => bewerk(a)} className="text-brand hover:underline">bewerken</button>
-                  <button type="button" onClick={() => weg(a.id)} className="text-slate-400 hover:text-rose-600">verwijderen</button>
-                </span>
+          {zichtbaar.map(a => {
+            const fmt = AANTEKENING_FORMATS[a.soort] || AANTEKENING_FORMATS['Overig'];
+            const vw = a.velden || {};
+            const vinken = fmt.filter(v => (v.t === 'vink' || v.t === 'keuze') && vw[v.k]);
+            const licht = fmt.find(v => v.t === 'stoplicht' && (vw[v.k] || vw[v.k + 'Toelichting']));
+            const lichtOptie = licht && STOPLICHT.find(o => o.w === vw[licht.k]);
+            const teksten = fmt.filter(v => v.t === 'tekst' && vw[v.k]);
+            return (
+              <div key={a.id} className="border border-slate-100 rounded-lg p-2.5 text-sm">
+                <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                  <Badge className={AANTEKENING_KLEUR[a.soort] || AANTEKENING_KLEUR['Overig']}>{a.soort}</Badge>
+                  <span className="text-xs text-slate-500">{a.datum ? CGT.datumDM(a.datum) : ''}</span>
+                  {a.door && <span className="text-xs text-slate-500">· door {a.door}</span>}
+                  <span className="ml-auto flex gap-2 text-xs">
+                    <button type="button" onClick={() => bewerk(a)} className="text-brand hover:underline">bewerken</button>
+                    <button type="button" onClick={() => weg(a.id)} className="text-slate-400 hover:text-rose-600">verwijderen</button>
+                  </span>
+                </div>
+                {licht && (
+                  <div className="mb-1.5"><span className="text-xs text-slate-500 mr-1">{licht.label}</span>{lichtOptie && <Badge className={lichtOptie.kleur}>{lichtOptie.label}</Badge>}
+                    {vw[licht.k + 'Toelichting'] && <div className="text-slate-700 whitespace-pre-wrap mt-1">{vw[licht.k + 'Toelichting']}</div>}</div>
+                )}
+                {vinken.length > 0 && (
+                  <ul className="mb-1.5 space-y-0.5">
+                    {vinken.map(v => {
+                      const w = vw[v.k], goed = w === 'ja' || w === 'Go';
+                      return <li key={v.k} className={'text-xs ' + (goed ? 'text-emerald-700' : w === 'nee' || w === 'No-go' ? 'text-rose-600' : 'text-amber-700')}>{goed ? '✓' : w === 'nee' || w === 'No-go' ? '✗' : '•'} {v.label}{v.t === 'keuze' ? ': ' + w : ''}</li>;
+                    })}
+                  </ul>
+                )}
+                {teksten.map(v => (
+                  <div key={v.k} className="mb-1">
+                    {v.k !== 'tekst' && <div className="text-xs text-slate-400">{v.label}</div>}
+                    <div className="text-slate-700 whitespace-pre-wrap">{vw[v.k]}</div>
+                  </div>
+                ))}
+                {a.tekst && !vw.tekst && <div className="text-slate-700 whitespace-pre-wrap">{a.tekst}</div>}
               </div>
-              <div className="text-slate-700 whitespace-pre-wrap">{a.tekst}</div>
-              {a.door && <div className="text-xs text-slate-400 mt-1">door {a.door}</div>}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -3645,7 +3798,7 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
               </div>
             </div>
           </div>
-          <GroepAantekeningen key={'aant-' + g.id} g={g} onUpdate={onUpdate} />
+          <GroepAantekeningen key={'aant-' + g.id} g={g} p={p} checklistState={checklistState} onZetChecklist={onZetChecklist} onUpdate={onUpdate} />
         </div>
         <div className="space-y-5 min-w-0">
           <GroepOpvolging g={g} setGroepen={setGroepen} onNieuw={setOpvolg} />
@@ -3662,7 +3815,6 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
                       <span className="font-medium text-ink">{s.naam || '—'}</span>
                       {s.isContact && <Badge className="bg-brandlight text-branddark border-brand/30">contactpersoon</Badge>}
                       {s.woonplaats && <span className="text-slate-400 text-xs">{s.woonplaats}</span>}
-                      {(() => { const n = (g.aantekeningen || []).filter(a => (a.studentIds || []).includes(s.id)).length; return n ? <span className="ml-auto text-xs text-slate-400" title="Aantekeningen over deze student">📝 {n}</span> : null; })()}
                     </div>
                     <div className="text-xs text-slate-500 mt-0.5 flex flex-wrap gap-x-3">
                       {s.mail && <a className="text-brand hover:underline" href={'mailto:'+s.mail}>{s.mail}</a>}
@@ -4428,6 +4580,11 @@ function App() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   // verbinden met een gedeelde map
+  const syncMapRef = React.useRef('');
+  function bewaarSyncStand() {
+    const sy = syncRef.current;
+    if (sy && sy.s && sy.s.laatsteKern) saveLS(LS_SYNC_STAND, { map: syncMapRef.current, kern: sy.s.laatsteKern });
+  }
   async function verbind(adapter, naamMap, eersteKeer) {
     const sync = CGSYNC.maakSync(adapter, wieBenIk());
     let kern = await sync.start();
@@ -4442,8 +4599,28 @@ function App() {
       if (!confirm('In deze browser staan gegevens die anders zijn dan in de gedeelde map. De gedeelde map is leidend.\n\nVoor de zekerheid wordt eerst een back-up van de gegevens in deze browser gedownload. Doorgaan?')) return false;
       downloadBackup(lokaal, `crm-backup-browser-${new Date().toISOString().slice(0, 10)}.json`);
     }
+    // Wijzigingen die in deze browser zijn gedaan terwijl de map niet gekoppeld was (bijv. na een update of
+    // herstart, vóór "Toegang heractiveren"), gaan niet verloren: ze worden alsnog als eigen wijziging gedeeld.
+    const vorige = loadLS(LS_SYNC_STAND, null);
+    const leegDeel = v => Array.isArray(v) ? v.length === 0 : !v || Object.keys(v).length === 0;
+    const samen = JSON.parse(JSON.stringify(CGSYNC.kernUit(kern)));
+    let tussendoor = 0;
+    if (vorige && vorige.kern && vorige.map === naamMap) {
+      const ops = CGSYNC.verschil(CGSYNC.kernUit(vorige.kern), lokaal);
+      ops.forEach(o => CGSYNC.pasToe(samen, o));
+      tussendoor = ops.length;
+    } else {
+      // eerste keer deze map: wat in de map nog leeg is (bijv. het team), overnemen uit deze browser
+      CGSYNC.KERN.forEach(k => { if (leegDeel(samen[k]) && !leegDeel(lokaal[k])) { samen[k] = JSON.parse(JSON.stringify(lokaal[k])); tussendoor++; } });
+    }
+    if (tussendoor && sync.registreer(samen)) {
+      kern = sync.s.laatsteKern;
+      try { await sync.schrijf(); } catch (e) { console.warn('Wegschrijven van tussendoor gemaakte wijzigingen mislukt; volgende keer opnieuw.', e); }
+    }
+    syncMapRef.current = naamMap;
     syncRef.current = sync;
     applyBundle(kern);
+    bewaarSyncStand();
     setMapNaam(naamMap); setCollegas(sync.collegas());
     setSyncStatus('verbonden'); setLastSyncTime(nowHHMM());
     return true;
@@ -4512,6 +4689,7 @@ function App() {
     if (!sync || syncStatus !== 'verbonden') return;
     const n = sync.registreer({ trajecten, contacten, uren, targets, groepen, checklist, team });
     if (!n) return;
+    bewaarSyncStand();
     setSavingState('saving');
     clearTimeout(schrijfTimer.current);
     schrijfTimer.current = setTimeout(schrijfNu, 700);
@@ -4526,7 +4704,7 @@ function App() {
       bezig = true;
       try {
         const nieuw = await syncRef.current.peil();
-        if (nieuw) applyBundle(nieuw);
+        if (nieuw) { applyBundle(nieuw); bewaarSyncStand(); }
         if (syncRef.current.s.teSchrijven) await syncRef.current.schrijf(); // bijv. opschonen na vastleggen
         setCollegas(syncRef.current.collegas());
         setLastSyncTime(nowHHMM());
@@ -4559,7 +4737,7 @@ function App() {
     setMenuOpen(false);
     if (!syncRef.current) return;
     if (!confirm('De huidige stand van iedereen vastleggen in crm-data.json? Dat is veilig en kan altijd. Collega\'s hoeven niets te doen.')) return;
-    try { applyBundle(await syncRef.current.legVast()); setLastSyncTime(nowHHMM()); alert('Vastgelegd in crm-data.json.'); }
+    try { applyBundle(await syncRef.current.legVast()); bewaarSyncStand(); setLastSyncTime(nowHHMM()); alert('Vastgelegd in crm-data.json.'); }
     catch (e) { alert('Vastleggen mislukt: ' + (e && e.message ? e.message : e)); }
   }
   // de gekoppelde map bevat ook het feedbackbestand: crm-feedback.json (wordt aangemaakt als het er nog niet is)
@@ -4596,7 +4774,7 @@ function App() {
     try {
       await syncRef.current.schrijf(true);
       const nieuw = await syncRef.current.peil();
-      if (nieuw) applyBundle(nieuw);
+      if (nieuw) { applyBundle(nieuw); bewaarSyncStand(); }
       setCollegas(syncRef.current.collegas());
       setSavingState('saved'); setLastSyncTime(nowHHMM());
       setTimeout(() => setSavingState('idle'), 1500);
