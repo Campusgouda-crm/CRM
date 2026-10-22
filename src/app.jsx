@@ -90,6 +90,21 @@ function vervangNamen(v, tabel) {
   if (nieuw.every((n, i) => n === delen[i])) return v;
   return [...new Set(nieuw)].join(', ');
 }
+// alles wat een collega aan jou richtte: berichten waarin je getagd bent en opvolgingen die je kreeg
+function isZelfde(a, b) { return !!a && !!b && normNaam(a) === normNaam(b); }
+function voorJouVan(groepen, ik) {
+  const uit = [];
+  if (!ik) return uit;
+  (groepen || []).forEach(g => {
+    (g.berichten || []).forEach(b => {
+      if ((b.vermeld || []).some(n => isZelfde(n, ik)) && !Object.keys(b.gezien || {}).some(n => isZelfde(n, ik))) uit.push({ soort: 'bericht', g, b, tijd: b.tijd || '' });
+    });
+    CGT.takenVan(g).forEach(t => {
+      if (t.voor && isZelfde(t.voor, ik) && !isZelfde(t.door, ik) && t.status !== 'klaar' && !t.gezienDoorVoor) uit.push({ soort: 'taak', g, t, tijd: t.aangemaakt || '' });
+    });
+  });
+  return uit.sort((a, b) => String(b.tijd).localeCompare(String(a.tijd)));
+}
 function sorteerTeam(team) {
   const plek = (rol) => { const i = TEAM_ROLLEN.findIndex(r => r.toLowerCase() === String(rol || '').trim().toLowerCase()); return i < 0 ? TEAM_ROLLEN.length : i; };
   return [...(team || [])].sort((a, b) => plek(a.rol) - plek(b.rol) || String(a.naam).localeCompare(String(b.naam), 'nl'));
@@ -2951,6 +2966,7 @@ function OpvolgModal({ start, groepen, onSave, onClose }) {
   const [f, setF] = useState(() => ({
     groepId: start.groepId || '', tekst: start.tekst || '', moment: start.moment || '',
     herinnerOp: CGT.werkdag(CGT.addDays(CGT.vandaagISO(), start.dagen || 3)), notitie: '', outlook: false,
+    voor: teamNaamVoor(mijnNaam(), TEAM_NAMEN) || mijnNaam(),
   }));
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
   const g = groepen.find(x => x.id === f.groepId);
@@ -2959,7 +2975,7 @@ function OpvolgModal({ start, groepen, onSave, onClose }) {
   const dagen = [[1, 'morgen'], [2, '2 dagen'], [3, '3 dagen'], [5, '5 dagen'], [7, '1 week'], [14, '2 weken']];
   const opslaan = () => {
     if (!f.groepId || !f.tekst.trim()) return;
-    const taak = CGT.nieuweTaak({ tekst: f.tekst.trim(), moment: f.moment, herinnerOp: f.herinnerOp, notitie: f.notitie.trim(), door: mijnNaam() });
+    const taak = CGT.nieuweTaak({ tekst: f.tekst.trim(), moment: f.moment, herinnerOp: f.herinnerOp, notitie: f.notitie.trim(), door: teamNaamVoor(mijnNaam(), TEAM_NAMEN) || mijnNaam(), voor: String(f.voor || '').trim() });
     onSave(f.groepId, taak);
     if (f.outlook && g) bewaarBestand(`herinnering-${(g.groepsnummer || 'groep').replace(/\s+/g, '-')}.ics`, CGT.icsHerinnering(g, taak), 'text/calendar;charset=utf-8');
   };
@@ -2979,6 +2995,17 @@ function OpvolgModal({ start, groepen, onSave, onClose }) {
         <div className="flex flex-wrap gap-1.5 mt-2">
           {snel.map(([t, mo]) => <button key={t} type="button" onClick={() => setF(p => ({ ...p, tekst: t, moment: mo }))} className="text-xs px-2 py-1 rounded-full border border-slate-200 text-slate-600 hover:border-brand hover:text-branddark">{t}</button>)}
         </div>
+      </Field>
+      <Field label="Voor wie?">
+        {TEAM_NAMEN.length ? (
+          <div className="flex flex-wrap gap-1.5">
+            {TEAM_NAMEN.map(n => (
+              <button key={n} type="button" onClick={() => set('voor', n)}
+                className={'text-sm px-3 py-1 rounded-full border ' + (isZelfde(f.voor, n) ? 'bg-brand text-white border-brand' : 'border-slate-300 text-slate-600 hover:border-brand')}>{n}</button>
+            ))}
+          </div>
+        ) : <input className={inputCls} value={f.voor} onChange={e => set('voor', e.target.value)} placeholder="naam" />}
+        {f.voor && !isZelfde(f.voor, mijnNaam()) && <span className="block text-xs text-slate-500 mt-1">{f.voor} krijgt dit te zien bij Taken, onder "Voor jou".</span>}
       </Field>
       <Field label="Herinner mij">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -3077,7 +3104,7 @@ function OpvolgRegel({ item, metGroep, onKlaar, onUitstel, onWeg, onOpenGroep, o
         <div className={`text-sm ${klaar ? 'line-through text-slate-400' : 'text-slate-800 font-medium'}`}>{t.tekst}</div>
         <div className="text-xs text-slate-500">
           {klaar ? waarom : t.herinnerOp ? (dagen < 0 ? <span className="text-rose-700">herinnering was {CGT.datumKort(t.herinnerOp)} ({CGT.over(dagen)})</span> : dagen === 0 ? <span className="text-amber-700">vandaag opvolgen</span> : `herinnering ${CGT.datumKort(t.herinnerOp)} (${CGT.over(dagen)})`) : ''}
-          {t.door ? ` · gezet door ${t.door}` : ''}{t.notitie ? ` · ${t.notitie}` : ''}
+          {t.voor && !isZelfde(t.voor, t.door) ? <span className={isZelfde(t.voor, mijnNaam()) ? 'text-branddark font-semibold' : ''}>{` · voor ${isZelfde(t.voor, mijnNaam()) ? 'jou' : t.voor}`}</span> : null}{t.door ? ` · gezet door ${t.door}` : ''}{t.notitie ? ` · ${t.notitie}` : ''}
         </div>
       </div>
       {!klaar && (
@@ -3151,6 +3178,13 @@ function TakenTab({ groepen, setGroepen, checklist, onOpenGroep, contacten = [],
     setContacten(prev => prev.filter(x => x.id !== c.id));
   };
   const [naam, setNaam] = useState(() => mijnNaam());
+  const ikNaam = teamNaamVoor(naam || mijnNaam(), TEAM_NAMEN) || String(naam || mijnNaam() || '').trim();
+  const voorJou = useMemo(() => voorJouVan(groepen, ikNaam), [groepen, ikNaam]);
+  const markeerGezien = (x) => setGroepen(prev => prev.map(g => {
+    if (g.id !== x.g.id) return g;
+    if (x.soort === 'bericht') return { ...g, berichten: (g.berichten || []).map(b => b.id === x.b.id ? { ...b, gezien: { ...(b.gezien || {}), [ikNaam]: new Date().toISOString() } } : b) };
+    return { ...g, taken: CGT.takenVan(g).map(t => t.id === x.t.id ? { ...t, gezienDoorVoor: true } : t) };
+  }));
   const [alleenMijn, setAlleenMijn] = useState(() => !!loadLS(LS_ALLEENMIJN, false));
   const [toonOverig, setToonOverig] = useState(false);
   const [toonKlaar, setToonKlaar] = useState(false);
@@ -3177,7 +3211,7 @@ function TakenTab({ groepen, setGroepen, checklist, onOpenGroep, contacten = [],
       {(() => {
         const uur = new Date().getHours();
         const groet = uur < 12 ? 'Goedemorgen' : uur < 18 ? 'Goedemiddag' : 'Goedenavond';
-        const voornaam = String(naam || '').trim().split(/\s+/)[0];
+        const voornaam = String(naam || mijnNaam() || '').trim().split(/\s+/)[0];
         const urgent = tel('urgent'), week = tel('dezeweek');
         const samen = [urgent ? urgent + ' urgent' : 'niets urgents', week ? week + ' deze week' : '', o.opvolgen.length ? o.opvolgen.length + ' op te volgen' : ''].filter(Boolean).join(' · ');
         return (
@@ -3207,6 +3241,24 @@ function TakenTab({ groepen, setGroepen, checklist, onOpenGroep, contacten = [],
           </div>
         ))}
       </div>
+
+      {voorJou.length > 0 && (<>
+        <Kop titel={'Voor jou (' + voorJou.length + ')'} sub="Berichten waarin je bent getagd en opvolgingen die een collega aan jou gaf." />
+        <Lijst>{voorJou.map(x => (
+          <div key={(x.b || x.t).id} className={themaStreep(x.g) + ' flex flex-wrap items-start gap-x-3 gap-y-1 px-4 py-3'}>
+            <div className="min-w-0 flex-1">
+              <button onClick={() => onOpenGroep(x.g.id)} className="text-left text-xs text-slate-500 hover:underline"><span className="font-semibold text-ink">{x.g.groepsnummer}</span> {x.g.titel}</button>
+              {x.soort === 'bericht'
+                ? <div className="text-sm text-slate-800"><span className="font-medium">{x.b.door}</span> taggde je <span className="text-xs text-slate-500">({berichtTijd(x.b.tijd)})</span>: <span className="text-slate-600">{x.b.tekst}</span></div>
+                : <div className="text-sm text-slate-800"><span className="font-medium">{x.t.door || 'Een collega'}</span> gaf je een opvolging: <span className="text-slate-600">{x.t.tekst}</span>{x.t.herinnerOp ? <span className="text-xs text-slate-500"> · herinnering {CGT.datumKort(x.t.herinnerOp)}</span> : null}</div>}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button onClick={() => onOpenGroep(x.g.id)} className="text-xs text-brand font-medium hover:underline">Open groep</button>
+              <button onClick={() => markeerGezien(x)} className={knopKleinPrimair}>Gezien</button>
+            </div>
+          </div>
+        ))}</Lijst>
+      </>)}
 
       <Kop titel="Opvolgen" sub="Herinneringen die je zelf hebt gezet, bijvoorbeeld na het mailen van een groep." />
       {o.opvolgen.length === 0
@@ -3330,6 +3382,13 @@ function GroepPlanning({ g, p, onUpdate }) {
             <div key={mo.id} className="rounded-lg border border-slate-200 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-medium text-sm text-ink">{mo.naam}</span>
+                {(() => {
+                  const sp = mo.id === 'tussen' ? 'schoolTussen' : mo.id === 'eind' ? 'schoolEind' : '';
+                  const x2 = sp ? CGT.bijzonderhedenVan(g)[sp] : null;
+                  return x2 && x2.heeft === 'ja'
+                    ? <span className="text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5" title="Bij Bijzonderheden opleiding staat dat deze presentatie ook op school is">❗ ook op school vereist{x2.datum ? ' · ' + CGT.datumDM(x2.datum) : ' · datum nog onbekend'}</span>
+                    : null;
+                })()}
                 <Keuze waarde={x.status} leeg="open" onChange={v => setMoment(mo.id, { status: v })}
                   opties={[['open', 'Open', 'bg-slate-200 text-slate-700'], ['indicatie', 'Indicatie', 'bg-amber-100 text-amber-800'], ['gepland', 'Gepland', 'bg-brand text-white'], ['nvt', 'n.v.t.', 'bg-slate-200 text-slate-700']]} />
               </div>
@@ -3536,12 +3595,14 @@ function GroepBijzonderheden({ g, onUpdate }) {
 function GroepEvaluatie({ g, p, onUpdate }) {
   const vandaag = CGT.vandaagISO();
   const ev = g.evaluatie || {};
-  if (!(p.eind && vandaag > p.eind) && !ev.tevredenheid) return null;
+  const nogNiet = !(p.eind && vandaag > p.eind) && !ev.tevredenheid;
   const zet = deel => onUpdate(x => ({ ...x, evaluatie: { ...(x.evaluatie || {}), ...deel, ingevuldOp: vandaag } }));
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-4">
       <h3 className="font-semibold text-ink text-sm mb-1">Afronding: evaluatie met de opdrachtgever</h3>
-      <p className="text-xs text-slate-500 mb-3">Kort na de eindpresentatie vragen. Zo zie je later welke opdrachtgevers tevreden zijn en terug willen komen.</p>
+      <p className="text-xs text-slate-500 mb-3">{nogNiet
+        ? <>Dit is aan de orde na de eindpresentatie{p.eind ? <> ({CGT.datumDM(p.eind)})</> : null}. Vraag dan kort aan de opdrachtgever hoe tevreden die is. Heeft de opdrachtgever al iets laten weten? Dan kun je het nu al invullen.</>
+        : 'Kort na de eindpresentatie vragen. Zo zie je later welke opdrachtgevers tevreden zijn en terug willen komen.'}</p>
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm mb-2">
         <span className="text-slate-600">Tevredenheid opdrachtgever</span>
         <Keuze waarde={ev.tevredenheid ? String(ev.tevredenheid) : ''} onChange={v => zet({ tevredenheid: v ? Number(v) : null })}
@@ -3927,6 +3988,53 @@ function GroepAantekeningen({ g, p, checklistState, onZetChecklist, onUpdate }) 
 
 // Een lade op de groepspagina: balk met titel en samenvatting, klik om open of dicht te klappen.
 // De onderdelen hebben zelf een kaart met titel; in de lade vallen die rand en titel weg.
+// korte berichten bij een groep; met @Naam tag je een collega, die het dan bij Taken onder "Voor jou" ziet
+const berichtTijd = iso => { try { return new Date(iso).toLocaleString('nl-NL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
+function GroepBerichten({ g, onUpdate }) {
+  const ik = teamNaamVoor(mijnNaam(), TEAM_NAMEN) || mijnNaam() || 'Collega';
+  const [tekst, setTekst] = useState('');
+  const [alles, setAlles] = useState(false);
+  const berichten = (g.berichten || []).slice().sort((a, b) => String(a.tijd).localeCompare(String(b.tijd)));
+  const zichtbaar = alles ? berichten : berichten.slice(-5);
+  const esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tagRe = TEAM_NAMEN.length ? new RegExp('(' + TEAM_NAMEN.map(n => '@' + esc(n)).sort((a, b) => b.length - a.length).join('|') + ')', 'gi') : null;
+  const vermeldIn = t => TEAM_NAMEN.filter(n => t.toLowerCase().includes('@' + n.toLowerCase()));
+  const opmaak = t => tagRe ? t.split(tagRe).map((d, i) => i % 2 ? <span key={i} className="font-semibold text-branddark">{d}</span> : d) : t;
+  const stuur = () => {
+    const t = tekst.trim(); if (!t) return;
+    onUpdate(x => ({ ...x, berichten: [...(x.berichten || []), { id: uid(), door: ik, tekst: t, tijd: new Date().toISOString(), vermeld: vermeldIn(t), gezien: {} }] }));
+    setTekst('');
+  };
+  const weg = id => { if (confirm('Dit bericht verwijderen?')) onUpdate(x => ({ ...x, berichten: (x.berichten || []).filter(b => b.id !== id) })); };
+  const tag = n => setTekst(t => (t && !t.endsWith(' ') ? t + ' ' : t) + '@' + n + ' ');
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-4">
+      <h3 className="font-semibold text-ink text-sm mb-2">Berichten{berichten.length ? ' (' + berichten.length + ')' : ''}</h3>
+      {berichten.length > 5 && !alles && <button type="button" onClick={() => setAlles(true)} className="text-xs text-brand hover:underline mb-1">Toon alle {berichten.length}</button>}
+      {zichtbaar.length === 0 && <p className="text-sm text-slate-400 mb-2">Nog geen berichten. Tag een collega met @ om iets te vragen of door te geven.</p>}
+      <div className="space-y-2 mb-2">
+        {zichtbaar.map(b => (
+          <div key={b.id} className={'rounded-lg px-3 py-2 text-sm ' + (isZelfde(b.door, ik) ? 'bg-brandlight/40 ml-4' : 'bg-slate-50 mr-4')}>
+            <div className="flex items-center gap-2 text-[11px] text-slate-500">
+              <span className="font-semibold text-ink">{b.door}</span><span>{berichtTijd(b.tijd)}</span>
+              {isZelfde(b.door, ik) && <button type="button" onClick={() => weg(b.id)} className="ml-auto hover:text-rose-600" aria-label="Bericht verwijderen">✕</button>}
+            </div>
+            <div className="text-slate-700 whitespace-pre-wrap break-words">{opmaak(b.tekst)}</div>
+            {(b.vermeld || []).length > 0 && <div className="text-[11px] text-slate-400 mt-0.5">{b.vermeld.map(n => n + (Object.keys(b.gezien || {}).some(x => isZelfde(x, n)) ? ' ✓ gezien' : '')).join(' · ')}</div>}
+          </div>
+        ))}
+      </div>
+      <textarea value={tekst} onChange={e => setTekst(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); stuur(); } }} rows={2}
+        placeholder="Bericht… tag met @, Enter om te versturen" aria-label="Nieuw bericht"
+        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand/40" />
+      <div className="flex flex-wrap items-center gap-1 mt-1">
+        {TEAM_NAMEN.filter(n => !isZelfde(n, ik)).map(n => <button key={n} type="button" onClick={() => tag(n)} className="text-[11px] px-2 py-0.5 rounded-full border border-slate-300 text-slate-600 hover:border-brand hover:text-brand">@{n}</button>)}
+        <button type="button" onClick={stuur} disabled={!tekst.trim()} className={knopKleinPrimair + ' ml-auto disabled:opacity-40'}>Versturen</button>
+      </div>
+    </div>
+  );
+}
+
 function Lade({ titel, samenvatting, open, onToggle, children, aandacht }) {
   return (
     <section className="bg-white rounded-xl border border-slate-200">
@@ -3967,7 +4075,16 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
   const momentDM = (id) => { const x = p.m[id]; return x && x.datum ? CGT.datumDM(x.datum) + (x.status === 'indicatie' ? '?' : '') : '—'; };
   const planSamenvatting = 'kick-off ' + momentDM('kickoff') + ' · tussen ' + momentDM('tussen') + ' · eind ' + momentDM('eind');
   const nietGepland = [{ id: 'kickoff', naam: 'Kick-off' }, { id: 'tussen', naam: 'Tussenpresentatie' }, { id: 'eind', naam: 'Eindpresentatie' }]
-    .map(x => ({ ...x, ...(p.m[x.id] || {}) })).filter(x => x.status !== 'gepland' && x.status !== 'nvt');
+    .map(x => ({ ...x, ...(p.m[x.id] || {}) })).filter(x => x.status !== 'gepland' && x.status !== 'nvt')
+    .concat([['schoolTussen', 'Tussenpresentatie op school'], ['schoolEind', 'Eindpresentatie op school']]
+      .filter(([k]) => CGT.bijzonderhedenVan(g)[k].heeft === 'ja' && !CGT.bijzonderhedenVan(g)[k].datum).map(([k, naam]) => ({ id: k, naam: '❗ ' + naam, datum: '' })));
+  const bz = CGT.bijzonderhedenVan(g);
+  const schoolPres = [['schoolTussen', 'Tussenpresentatie op school'], ['schoolEind', 'Eindpresentatie op school']].filter(([k]) => bz[k].heeft === 'ja');
+  const bzTel = schoolPres.length + bz.eisen.length + (String(bz.notities || '').trim() ? 1 : 0);
+  const bzOpen = bz.eisen.filter(e => !e.klaar).length;
+  const bzSamenvatting = bzTel ? bzTel + (bzTel === 1 ? ' bijzonderheid' : ' bijzonderheden') + (schoolPres.length ? ' · ❗ ' + schoolPres.map(([, n]) => n.split(' ')[0].toLowerCase()).join(' en ') + ' op school' : '') + (bzOpen ? ' · ' + bzOpen + ' eis(en) open' : '') : 'geen';
+  const ev = g.evaluatie || {};
+  const evSamenvatting = ev.tevredenheid ? 'tevredenheid ' + ev.tevredenheid + '/5' + (ev.opnieuw ? ' · opnieuw: ' + ev.opnieuw : '') : (p.eind && vandaag > p.eind ? 'nog invullen' : 'na de eindpresentatie' + (p.eind ? ' (' + CGT.datumDM(p.eind) + ')' : ''));
   const aant = g.aantekeningen || [];
   const laatsteAant = aant.slice().sort((x, y) => String(y.datum).localeCompare(String(x.datum)))[0];
   const aantSamenvatting = aant.length ? aant.length + ' · laatste: ' + laatsteAant.soort + (laatsteAant.datum ? ' ' + CGT.datumDM(laatsteAant.datum) : '') : 'nog geen';
@@ -4011,7 +4128,7 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
           <Lade titel="Checklist begeleiding" samenvatting={cv.done + ' van ' + cv.total + ' klaar'} {...lade('checklist')}>
             <GroepChecklist key={g.id} g={g} p={p} state={checklistState} onZet={onZetChecklist} />
           </Lade>
-          <Lade titel="Bijzonderheden opleiding" {...lade('bijzonderheden')}>
+          <Lade titel="Bijzonderheden opleiding" samenvatting={bzSamenvatting} aandacht={bzOpen > 0 || schoolPres.some(([k]) => !bz[k].datum)} {...lade('bijzonderheden')}>
             <GroepBijzonderheden g={g} onUpdate={onUpdate} />
           </Lade>
           <Lade titel="Gegevens van de groep" samenvatting={[g.vorm, g.opleiding, g.docent].filter(Boolean).join(' · ')} {...lade('gegevens')}>
@@ -4048,7 +4165,7 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
               )}
             </div>
           </Lade>
-          <Lade titel="Afronding: evaluatie met de opdrachtgever" {...lade('evaluatie')}>
+          <Lade titel="Afronding: evaluatie met de opdrachtgever" samenvatting={evSamenvatting} aandacht={!!(p.eind && vandaag > p.eind && !ev.tevredenheid)} {...lade('evaluatie')}>
             <GroepEvaluatie g={g} p={p} onUpdate={onUpdate} />
           </Lade>
           <Lade titel="Welke gegevens heb ik?" {...lade('welkegegevens')}>
@@ -4076,6 +4193,8 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
               <MailGroepKnop groep={g} onGemaild={sj => gemaild(g.id, sj)} />
             </div>
           </div>
+          <GroepBerichten g={g} onUpdate={onUpdate} />
+
           <div className="bg-white rounded-xl border border-slate-200 p-4">
             <h3 className="font-semibold text-ink text-sm mb-2">Nog niet gepland</h3>
             {nietGepland.length === 0
@@ -5248,8 +5367,9 @@ function App() {
 
   const takenTeller = useMemo(() => {
     const o = CGT.takenOverzicht(groepen, checklist, CGT.vandaagISO());
-    return o.opvolgen.length + o.signalen.filter(x => !x.verborgen && (x.niveau === 'urgent' || x.niveau === 'binnenkort')).length;
-  }, [groepen, checklist]);
+    const ik = teamNaamVoor(mijnNaam(), TEAM_NAMEN) || mijnNaam();
+    return o.opvolgen.length + o.signalen.filter(x => !x.verborgen && (x.niveau === 'urgent' || x.niveau === 'binnenkort')).length + voorJouVan(groepen, ik).length;
+  }, [groepen, checklist, team]);
   const [vanTaken, setVanTaken] = useState(false);
   function openGroepFromTaken(gid) { setTab('groepen'); setPendingGroepId(gid); setVanTaken(true); }
   useEffect(() => { if (tab !== 'groepen') setVanTaken(false); }, [tab]);
