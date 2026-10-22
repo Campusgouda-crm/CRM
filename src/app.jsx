@@ -2943,17 +2943,17 @@ function OpvolgRegel({ item, metGroep, onKlaar, onUitstel, onWeg, onOpenGroep, o
 }
 
 /* ---------- één regel signaal ---------- */
-function SignaalRegel({ s, metGroep, onOpenGroep, onLater, onGemaild, onActie }) {
+function SignaalRegel({ s, metGroep, onOpenGroep, onLater, onGemaild, onActie, compact }) {
   const g = s.groep;
   return (
-    <div className="flex flex-wrap sm:flex-nowrap gap-x-3 gap-y-1 px-4 py-3">
-      <div className="pt-0.5 w-full sm:w-[124px] shrink-0"><NiveauPill niveau={s.niveau} /></div>
+    <div className={compact ? 'flex flex-col gap-1 px-3 py-2.5' : 'flex flex-wrap sm:flex-nowrap gap-x-3 gap-y-1 px-4 py-3'}>
+      <div className={compact ? '' : 'pt-0.5 w-full sm:w-[124px] shrink-0'}><NiveauPill niveau={s.niveau} /></div>
       <div className="min-w-0 flex-1">
         {metGroep && <button onClick={() => onOpenGroep(g.id)} className="text-left text-xs text-slate-500 hover:underline"><span className="font-semibold text-ink">{g.groepsnummer}</span> {g.titel}{g.contactCG ? ' · ' + g.contactCG : ''}</button>}
         <div className="text-sm font-medium text-slate-800">{s.titel}{s.looptAl && <span className="ml-2 text-[11px] font-semibold px-1.5 py-0.5 rounded bg-sky-50 text-regio border border-sky-200">opvolging loopt</span>}</div>
         <p className="text-sm text-slate-600 leading-relaxed">{s.tekst}</p>
       </div>
-      <div className="flex flex-wrap sm:flex-col items-start sm:items-end gap-1.5 shrink-0">
+      <div className={compact ? 'flex flex-wrap items-center gap-1.5' : 'flex flex-wrap sm:flex-col items-start sm:items-end gap-1.5 shrink-0'}>
         {s.actie && onActie && <button onClick={() => { if (!s.actie.bevestig || confirm(s.actie.bevestig)) onActie(g.id, s.actie); }} className={knopKleinPrimair}>{s.actie.label}</button>}
         {s.moment && !s.looptAl && <MailGroepKnop groep={g} voorkeur={s.moment} klein onGemaild={sj => onGemaild(g.id, sj)} />}
         {metGroep && <button onClick={() => onOpenGroep(g.id)} className="text-xs text-brand font-medium hover:underline">Open groep</button>}
@@ -3736,6 +3736,28 @@ function GroepAantekeningen({ g, p, checklistState, onZetChecklist, onUpdate }) 
   );
 }
 
+// Een lade op de groepspagina: balk met titel en samenvatting, klik om open of dicht te klappen.
+// De onderdelen hebben zelf een kaart met titel; in de lade vallen die rand en titel weg.
+function Lade({ titel, samenvatting, open, onToggle, children, aandacht }) {
+  return (
+    <section className="bg-white rounded-xl border border-slate-200">
+      <button type="button" onClick={onToggle} aria-expanded={open}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 rounded-xl">
+        <span className={'text-slate-400 text-xs transition-transform ' + (open ? 'rotate-90' : '')} aria-hidden="true">▶</span>
+        <span className="font-semibold text-ink text-sm">{titel}</span>
+        {aandacht ? <span className="w-2 h-2 rounded-full bg-amber-500" title="Hier is iets nodig" /> : null}
+        {samenvatting && <span className="ml-auto text-xs text-slate-500 truncate min-w-0">{samenvatting}</span>}
+      </button>
+      {open && (
+        <div className="px-4 pb-4 border-t border-slate-100 pt-3 [&>div]:border-0 [&>div]:p-0 [&>div]:bg-transparent [&>div]:rounded-none [&>div>h3:first-child]:hidden [&>div>div:first-child>h3]:hidden">
+          {children}
+        </div>
+      )}
+    </section>
+  );
+}
+const LS_LADES = 'cgt_lades_groep';
+
 function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdate, setGroepen, onBack, onEdit, onDelete, onOpenTraject }) {
   const g = groep;
   const vandaag = CGT.vandaagISO();
@@ -3745,6 +3767,21 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
   const later = (regel) => onUpdate(x => ({ ...x, verborgen: { ...(x.verborgen || {}), [regel]: CGT.addDays(vandaag, 7) } }));
   const [opvolg, setOpvolg] = useState(null);
   const gemaild = (gid, sj) => setOpvolg(startNaMail(g.id, sj));
+  // lades: welke open staan, wordt onthouden (per browser)
+  const [lades, setLades] = useState(() => loadLS(LS_LADES, { planning: true, aantekeningen: true }) || {});
+  const zetLades = (fn) => setLades(prev => { const n = fn(prev); saveLS(LS_LADES, n); return n; });
+  const lade = (id) => ({ open: !!lades[id], onToggle: () => zetLades(prev => ({ ...prev, [id]: !prev[id] })) });
+  const openLade = (id) => zetLades(prev => ({ ...prev, [id]: true }));
+  const studenten = g.studenten || [];
+  const cv = checklistVoortgang(checklistState);
+  const openTaken = CGT.takenVan(g).filter(t => !CGT.taakKlaar(g, t, p.m).klaar).sort((x, y) => String(x.herinnerOp || '').localeCompare(String(y.herinnerOp || '')));
+  const momentDM = (id) => { const x = p.m[id]; return x && x.datum ? CGT.datumDM(x.datum) + (x.status === 'indicatie' ? '?' : '') : '—'; };
+  const planSamenvatting = 'kick-off ' + momentDM('kickoff') + ' · tussen ' + momentDM('tussen') + ' · eind ' + momentDM('eind');
+  const nietGepland = [{ id: 'kickoff', naam: 'Kick-off' }, { id: 'tussen', naam: 'Tussenpresentatie' }, { id: 'eind', naam: 'Eindpresentatie' }]
+    .map(x => ({ ...x, ...(p.m[x.id] || {}) })).filter(x => x.status !== 'gepland' && x.status !== 'nvt');
+  const aant = g.aantekeningen || [];
+  const laatsteAant = aant.slice().sort((x, y) => String(y.datum).localeCompare(String(x.datum)))[0];
+  const aantSamenvatting = aant.length ? aant.length + ' · laatste: ' + laatsteAant.soort + (laatsteAant.datum ? ' ' + CGT.datumDM(laatsteAant.datum) : '') : 'nog geen';
   const Row = ({ label, value }) => (
     <div className="py-2 border-b border-slate-100 grid grid-cols-3 gap-2 text-sm">
       <div className="text-slate-500 font-medium">{label}</div>
@@ -3765,71 +3802,133 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
           {g.titel && <p className="text-slate-500">{g.titel}</p>}
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
-          <KopieerAdressenKnop groep={g} />
-          <MailGroepKnop groep={g} onGemaild={sj => gemaild(g.id, sj)} />
           <button onClick={onEdit} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm hover:bg-branddark">Bewerken</button>
           <button onClick={onDelete} className="px-3 py-1.5 rounded-lg border border-rose-300 text-rose-600 text-sm hover:bg-rose-50">Verwijderen</button>
         </div>
       </div>
 
-      {sigs.length > 0 && (
-        <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 mb-5">
-          {sigs.map(x => <SignaalRegel key={x.id} s={{ ...x, groep: g, looptAl: x.moment && CGT.takenVan(g).some(t => t.moment === x.moment && !CGT.taakKlaar(g, t, p.m).klaar) }}
-            onOpenGroep={() => {}} onLater={(gid, regel) => later(regel)} onGemaild={gemaild} onActie={(gid, a) => onUpdate(x => CGT.voerActieUit(x, a))} />)}
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <div className="space-y-5 min-w-0">
-          <GroepPlanning g={g} p={p} onUpdate={onUpdate} />
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <Row label="Vorm traject" value={g.vorm} />
-            <Row label="Opleiding / minor" value={g.opleiding} />
-            <Row label="Contact Campus Gouda" value={g.contactCG} />
-            <Row label="Docentbegeleider" value={g.docent} />
-            <Row label="Mailadres docent" value={g.docentMail ? <a className="text-brand hover:underline" href={'mailto:'+g.docentMail}>{g.docentMail}</a> : ''} />
-            <Row label="Wekelijkse afspraak" value={g.wekelijkseAfspraak} />
-            <div className="py-2 grid grid-cols-3 gap-2 text-sm">
-              <div className="text-slate-500 font-medium">Gekoppeld traject</div>
-              <div className="col-span-2">
-                {traject
-                  ? <button onClick={() => onOpenTraject(traject.id)} className="text-brand hover:underline text-left">{traject.titel} →</button>
-                  : <span className="text-slate-300">—</span>}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
+        {/* links: lades */}
+        <div className="space-y-3 min-w-0 order-2 lg:order-1">
+          <Lade titel="Planning" samenvatting={planSamenvatting} {...lade('planning')}>
+            <GroepPlanning g={g} p={p} onUpdate={onUpdate} />
+          </Lade>
+          <Lade titel="Aantekeningen" samenvatting={aantSamenvatting} {...lade('aantekeningen')}>
+            <GroepAantekeningen key={'aant-' + g.id} g={g} p={p} checklistState={checklistState} onZetChecklist={onZetChecklist} onUpdate={onUpdate} />
+          </Lade>
+          <Lade titel="Opvolging" samenvatting={openTaken.length ? openTaken.length + ' open' : 'niets open'} aandacht={openTaken.some(t => (t.herinnerOp || '') <= vandaag)} {...lade('opvolging')}>
+            <GroepOpvolging g={g} setGroepen={setGroepen} onNieuw={setOpvolg} />
+          </Lade>
+          <Lade titel="Checklist begeleiding" samenvatting={cv.done + ' van ' + cv.total + ' klaar'} {...lade('checklist')}>
+            <GroepChecklist key={g.id} g={g} p={p} state={checklistState} onZet={onZetChecklist} />
+          </Lade>
+          <Lade titel="Bijzonderheden opleiding" {...lade('bijzonderheden')}>
+            <GroepBijzonderheden g={g} onUpdate={onUpdate} />
+          </Lade>
+          <Lade titel="Gegevens van de groep" samenvatting={[g.vorm, g.opleiding, g.docent].filter(Boolean).join(' · ')} {...lade('gegevens')}>
+            <div>
+              <Row label="Vorm traject" value={g.vorm} />
+              <Row label="Opleiding / minor" value={g.opleiding} />
+              <Row label="Contact Campus Gouda" value={g.contactCG} />
+              <Row label="Docentbegeleider" value={g.docent} />
+              <Row label="Mailadres docent" value={g.docentMail ? <a className="text-brand hover:underline" href={'mailto:'+g.docentMail}>{g.docentMail}</a> : ''} />
+              <Row label="Wekelijkse afspraak" value={g.wekelijkseAfspraak} />
+              <div className="py-2 grid grid-cols-3 gap-2 text-sm border-b border-slate-100">
+                <div className="text-slate-500 font-medium">Gekoppeld traject</div>
+                <div className="col-span-2">
+                  {traject
+                    ? <button onClick={() => onOpenTraject(traject.id)} className="text-brand hover:underline text-left">{traject.titel} →</button>
+                    : <span className="text-slate-300">—</span>}
+                </div>
               </div>
+              {studenten.length > 0 && (
+                <div className="pt-3">
+                  <div className="text-sm text-slate-500 font-medium mb-1">Contactgegevens studenten</div>
+                  <div className="space-y-1.5">
+                    {studenten.map(st => (
+                      <div key={st.id} className="text-sm flex flex-wrap gap-x-3">
+                        <span className="font-medium text-ink">{st.naam || '—'}</span>
+                        {st.woonplaats && <span className="text-slate-400 text-xs self-center">{st.woonplaats}</span>}
+                        {st.mail && <a className="text-brand hover:underline text-xs self-center" href={'mailto:' + st.mail}>{st.mail}</a>}
+                        {st.telefoon && <span className="text-xs text-slate-500 self-center">{st.telefoon}</span>}
+                        {st.priveMail && <a className="text-brand hover:underline text-xs self-center" href={'mailto:' + st.priveMail}>{st.priveMail} (privé)</a>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Lade>
+          <Lade titel="Afronding: evaluatie met de opdrachtgever" {...lade('evaluatie')}>
+            <GroepEvaluatie g={g} p={p} onUpdate={onUpdate} />
+          </Lade>
+          <Lade titel="Welke gegevens heb ik?" {...lade('welkegegevens')}>
+            <GroepGegevens g={g} />
+          </Lade>
+        </div>
+
+        {/* rechts: altijd zichtbaar */}
+        <aside className="space-y-4 min-w-0 order-1 lg:order-2 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <h3 className="font-semibold text-ink text-sm mb-2">Studenten ({studenten.length})</h3>
+            {studenten.length === 0 ? <p className="text-sm text-slate-400">Nog geen studenten.</p> : (
+              <ul className="space-y-1 mb-3">
+                {studenten.map(st => (
+                  <li key={st.id} className="text-sm flex items-center gap-2 min-w-0">
+                    <span className="text-slate-800 truncate">{st.naam || '—'}</span>
+                    {st.isContact && <Badge className="bg-brandlight text-branddark border-brand/30">contact</Badge>}
+                    {!st.mail && <span className="text-[11px] text-amber-600" title="Geen mailadres bekend">geen mail</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <KopieerAdressenKnop groep={g} />
+              <MailGroepKnop groep={g} onGemaild={sj => gemaild(g.id, sj)} />
             </div>
           </div>
-          <GroepAantekeningen key={'aant-' + g.id} g={g} p={p} checklistState={checklistState} onZetChecklist={onZetChecklist} onUpdate={onUpdate} />
-        </div>
-        <div className="space-y-5 min-w-0">
-          <GroepOpvolging g={g} setGroepen={setGroepen} onNieuw={setOpvolg} />
-          <GroepEvaluatie g={g} p={p} onUpdate={onUpdate} />
-          <GroepBijzonderheden g={g} onUpdate={onUpdate} />
-          <GroepGegevens g={g} />
           <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <h3 className="font-semibold text-ink text-sm mb-2">Studenten ({(g.studenten||[]).length})</h3>
-            {(g.studenten || []).length === 0 ? <p className="text-sm text-slate-300">Geen studenten</p> : (
-              <div className="space-y-2">
-                {g.studenten.map(s => (
-                  <div key={s.id} className="border border-slate-100 rounded-lg p-2 text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-ink">{s.naam || '—'}</span>
-                      {s.isContact && <Badge className="bg-brandlight text-branddark border-brand/30">contactpersoon</Badge>}
-                      {s.woonplaats && <span className="text-slate-400 text-xs">{s.woonplaats}</span>}
+            <h3 className="font-semibold text-ink text-sm mb-2">Nog niet gepland</h3>
+            {nietGepland.length === 0
+              ? <p className="text-sm text-slate-400">Alle momenten staan vast.</p>
+              : <div className="space-y-1.5">
+                  {nietGepland.map(x => (
+                    <div key={x.id} className="flex items-center gap-2 text-sm">
+                      <span className="text-slate-700">{x.naam}</span>
+                      <span className="text-xs text-slate-400">{x.datum ? 'indicatie ' + CGT.datumDM(x.datum) : 'geen datum'}</span>
                     </div>
-                    <div className="text-xs text-slate-500 mt-0.5 flex flex-wrap gap-x-3">
-                      {s.mail && <a className="text-brand hover:underline" href={'mailto:'+s.mail}>{s.mail}</a>}
-                      {s.telefoon && <span>{s.telefoon}</span>}
-                      {s.priveMail && <a className="text-brand hover:underline" href={'mailto:'+s.priveMail}>{s.priveMail} (privé)</a>}
-                    </div>
-                  </div>
+                  ))}
+                  <button type="button" onClick={() => openLade('planning')} className="text-xs text-brand font-medium hover:underline">Naar de planning →</button>
+                </div>}
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200">
+            <div className="px-4 pt-3 pb-1 flex items-center justify-between">
+              <h3 className="font-semibold text-ink text-sm">Nog te doen</h3>
+              <span className="text-xs text-slate-400">{sigs.length + openTaken.length || ''}</span>
+            </div>
+            {sigs.length === 0 && openTaken.length === 0 && <p className="px-4 pb-3 text-sm text-slate-400">Niets dringends. 👍</p>}
+            {sigs.length > 0 && (
+              <div className="divide-y divide-slate-100">
+                {sigs.map(x => <SignaalRegel key={x.id} compact s={{ ...x, groep: g, looptAl: x.moment && CGT.takenVan(g).some(t => t.moment === x.moment && !CGT.taakKlaar(g, t, p.m).klaar) }}
+                  onOpenGroep={() => {}} onLater={(gid, regel) => later(regel)} onGemaild={gemaild} onActie={(gid, a) => onUpdate(x => CGT.voerActieUit(x, a))} />)}
+              </div>
+            )}
+            {openTaken.length > 0 && (
+              <div className="border-t border-slate-100 px-3 py-2.5 space-y-1">
+                <div className="text-xs font-semibold text-slate-500">Opvolgingen</div>
+                {openTaken.slice(0, 5).map(t => (
+                  <button key={t.id} type="button" onClick={() => openLade('opvolging')} className="w-full text-left text-sm flex gap-2 hover:text-brand">
+                    <span className={'text-xs shrink-0 pt-0.5 ' + ((t.herinnerOp || '') <= vandaag ? 'text-amber-600 font-semibold' : 'text-slate-400')}>{t.herinnerOp ? CGT.datumDM(t.herinnerOp) : ''}</span>
+                    <span className="min-w-0">{t.tekst}</span>
+                  </button>
                 ))}
+                {openTaken.length > 5 && <button type="button" onClick={() => openLade('opvolging')} className="text-xs text-brand hover:underline">+ {openTaken.length - 5} meer</button>}
               </div>
             )}
           </div>
-        </div>
-      </div>
-      <div className="mt-5">
-        <GroepChecklist key={g.id} g={g} p={p} state={checklistState} onZet={onZetChecklist} />
+
+        </aside>
       </div>
       <Modal open={!!opvolg} onClose={() => setOpvolg(null)} title="Opvolging toevoegen">
         {opvolg && <OpvolgModal start={opvolg} groepen={[g]} onClose={() => setOpvolg(null)}
