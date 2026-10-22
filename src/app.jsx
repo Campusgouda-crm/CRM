@@ -924,17 +924,22 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
     const sval = (v) => (v == null ? '' : String(v)).trim();
     const join = (a, b) => { const set = new Set([...(a ? a.split(',').map(s=>s.trim()) : []), ...(b ? [b.trim()] : [])].filter(Boolean)); return [...set].join(', '); };
     const out = [];
+    let studentenOverzicht = false;
+    // kop van de titelkolom: "Titel", of "Traject"/"Trajecten" zoals in de overzichten van Campus Gouda
+    const isTitelKop = (v) => /^(titel|traject|trajecten)$/.test(sval(v).toLowerCase());
     wb.SheetNames.forEach(sheetNaam => {
       const thema = THEMAS.find(t => t.toLowerCase() === sheetNaam.trim().toLowerCase()) || '';
       const ws = wb.Sheets[sheetNaam];
       const matrix = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
-      // headerrij = eerste rij met een cel "titel"
-      let hi = matrix.findIndex(r => r.some(c => sval(c).toLowerCase() === 'titel'));
+      // headerrij = eerste rij met een cel "Titel", "Traject" of "Trajecten"
+      let hi = matrix.findIndex(r => r.some(isTitelKop));
       if (hi < 0) return;
       const heads = matrix[hi].map(c => sval(c).toLowerCase());
+      // een blad met studentnamen is een studentenoverzicht: dat hoort bij Studentengroepen, niet hier
+      if (heads.some(h => /\b(naam|namen|student)/.test(h))) { studentenOverzicht = true; return; }
       const col = (...pats) => heads.findIndex(h => pats.some(p => h.includes(p)));
       const cSpeer = (() => { const i = col('speerpunt'); return i >= 0 ? i : col('thema'); })();
-      const cTitel = col('titel'), cLead = col('lead'), cDef = col('defin'), cOpl = col('opleiding'),
+      const cTitel = (() => { const i = heads.findIndex(h => h === 'titel'); return i >= 0 ? i : heads.findIndex(h => isTitelKop(h)); })(), cLead = col('lead'), cDef = col('defin'), cOpl = col('opleiding'),
             cCon = col('contact'), cWeek = col('weeks', 'weken'), cStart = col('startdatum'), cJaars = col('jaars'),
             cCtx = (() => { let i = col('context'); if (i<0) i = col('wat is de vraag','de vraag'); if (i<0) i = col('omschrijving'); return i; })(),
             cHoofd = (() => { let i = col('hoofdvragen'); if (i<0) i = col('deelvragen'); if (i<0) i = col('onderwerp'); return i; })(),
@@ -962,6 +967,7 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
         }
       });
     });
+    out.studentenOverzicht = studentenOverzicht;
     return out;
   }
   function onImportFileChosen(e) {
@@ -973,7 +979,12 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
     reader.onload = (ev) => {
       try {
         const parsed = parseTrajectenExcel(ev.target.result, importSemester);
-        if (!parsed.length) { alert('Geen trajecten herkend. Controleer of er een kolom "Titel" is.'); return; }
+        if (!parsed.length) {
+          alert(parsed.studentenOverzicht
+            ? 'Dit lijkt een studentenoverzicht (met namen van studenten). Importeer het bij het tabblad Studentengroepen → Excel-import.'
+            : 'Geen trajecten herkend. Controleer of er een kolom "Titel", "Traject" of "Trajecten" is.');
+          return;
+        }
         setImportParsed({ trajecten: parsed, bestand: file.name });
       } catch (err) { alert('Kon het Excel-bestand niet inlezen: ' + err.message); }
     };
