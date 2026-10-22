@@ -24,7 +24,7 @@ De app werkt ook zonder internet. Zonder internet kun je alleen geen adressen op
    - Zonder README.
 3. Zet de code online. Typ in de terminal, in deze map:
    ```bash
-   git remote add origin https://github.com/campusgouda-crm/crm.git
+   git remote add origin https://github.com/campusgouda-crm/CRM.git
    ```
    ```bash
    git push -u origin main

@@ -3947,12 +3947,26 @@ function mergeFeedback(a, b) {
   [...(a || []), ...(b || [])].forEach(f => { if (f && f.id) m.set(f.id, f); });
   return [...m.values()].sort((x, y) => String(x.datum).localeCompare(String(y.datum)));
 }
+// Veiligheid: alleen een leeg bestand of een feedbackbestand is goed — nooit crm-data.json of een wijzigingenbestand
+function geenFeedbackBestandFout() {
+  const e = new Error('Dit is niet het feedbackbestand. Kies crm-feedback.json, of koppel alleen de gedeelde map via ⚙ Opslag: dan gebruikt de app crm-feedback.json in die map vanzelf.');
+  e.name = 'GeenFeedbackBestand';
+  return e;
+}
+function isFeedbackInhoud(text) {
+  if (!text.trim()) return true;
+  let d; try { d = JSON.parse(text); } catch (e) { return false; }
+  return Array.isArray(d) || (d && typeof d === 'object' && Array.isArray(d.feedback));
+}
 async function leesFeedbackBestand(handle) {
+  if (/^crm-data/i.test(handle.name || '')) throw geenFeedbackBestandFout();
   const file = await handle.getFile();
   const text = await file.text();
+  if (!isFeedbackInhoud(text)) throw geenFeedbackBestandFout();
   return { lijst: text.trim() ? feedbackUitData(JSON.parse(text)) : [], lastModified: file.lastModified };
 }
 async function schrijfFeedbackBestand(handle, lijst) {
+  if (/^crm-data/i.test(handle.name || '') || !isFeedbackInhoud(await (await handle.getFile()).text())) throw geenFeedbackBestandFout();
   const w = await handle.createWritable();
   await w.write(JSON.stringify({ app: 'Campus Gouda CRM feedback', exportedAt: new Date().toISOString(), feedback: lijst }, null, 2));
   await w.close();
@@ -3970,6 +3984,19 @@ async function fsaWriteBundle(handle, payload) {
   await writable.close();
   const file = await handle.getFile();
   return file.lastModified;
+}
+
+// foutmelding bij koppelen: wat de gebruiker kan controleren, plus de technische melding
+function koppelFoutTekst(e) {
+  const tech = e ? (e.name + ': ' + e.message) : 'onbekende fout';
+  if (e && e.name === 'GeenFeedbackBestand') return e.message;
+  if (e && /InvalidModification|NoModificationAllowed|NotReadable|InvalidState/.test(e.name)) {
+    return 'Koppelen mislukt: de app kon niet in de map schrijven.\n\nControleer:\n' +
+      '• Heb je de MAP gekozen, niet een bestand erin?\n' +
+      '• Staat de map echt op je computer? Klik er in de Finder of Verkenner met de rechtermuisknop op en kies "Altijd op dit apparaat bewaren".\n' +
+      '• Draait OneDrive (wolkje met groen vinkje)?\n\nTechnisch: ' + tech;
+  }
+  return 'Koppelen mislukt: ' + tech;
 }
 
 // Feedback-paneel (in een modal) — opmerking achterlaten + verzamelde opmerkingen
@@ -3995,7 +4022,7 @@ function FeedbackBody({ feedback, status, onAdd, onDelete, onExport, onKoppel, o
           {status === 'unsupported' ? 'Gebruik Edge/Chrome om een gedeeld feedbackbestand te koppelen.'
             : status === 'verbonden' ? '● Gekoppeld aan crm-feedback.json — opmerkingen verzamelen automatisch van alle collega’s.'
             : status === 'prompt' ? 'Toegang tot het feedbackbestand moet opnieuw worden bevestigd.'
-            : 'Nog niet gekoppeld — opmerkingen staan alleen lokaal. Koppel een gedeeld feedbackbestand om ze te verzamelen.'}
+            : 'Nog niet gekoppeld — opmerkingen staan alleen lokaal. Koppel de gedeelde map via ⚙ Opslag: dan komen ze vanzelf in crm-feedback.json in die map.'}
         </span>
         {status !== 'unsupported' && (
           <span className="flex gap-2">
@@ -4143,7 +4170,7 @@ function App() {
         if (!map || map.kind !== 'directory') { setSyncStatus('niet-gekoppeld'); return; }
         mapRef.current = map;
         const perm = await map.queryPermission({ mode: 'readwrite' });
-        if (perm === 'granted') await verbind(CGSYNC.fsaAdapter(map), map.name, false);
+        if (perm === 'granted') { if (await verbind(CGSYNC.fsaAdapter(map), map.name, false)) await feedbackInMap(map); }
         else setSyncStatus('prompt'); // toestemming vragen mag alleen na een klik
       } catch (e) { setSyncStatus('niet-gekoppeld'); }
     })();
@@ -4235,8 +4262,8 @@ function App() {
     try {
       const map = await window.showDirectoryPicker({ mode: 'readwrite', id: 'crm-gedeelde-map' });
       mapRef.current = map;
-      if (await verbind(CGSYNC.fsaAdapter(map), map.name, true)) await idbSet(IDB_KEY, map);
-    } catch (e) { if (e && e.name !== 'AbortError') alert('Koppelen mislukt: ' + e.message); }
+      if (await verbind(CGSYNC.fsaAdapter(map), map.name, true)) { await idbSet(IDB_KEY, map); await feedbackInMap(map); }
+    } catch (e) { if (e && e.name !== 'AbortError') alert(koppelFoutTekst(e)); }
   }
   // alles vastleggen in crm-data.json (dan ziet ook het oude CRM de laatste stand, en blijven de wijzigingsbestanden klein)
   async function nieuwBestand() {
@@ -4246,13 +4273,23 @@ function App() {
     try { applyBundle(await syncRef.current.legVast()); setLastSyncTime(nowHHMM()); alert('Vastgelegd in crm-data.json.'); }
     catch (e) { alert('Vastleggen mislukt: ' + (e && e.message ? e.message : e)); }
   }
+  // de gekoppelde map bevat ook het feedbackbestand: crm-feedback.json (wordt aangemaakt als het er nog niet is)
+  async function feedbackInMap(map) {
+    try {
+      const fh = await map.getFileHandle('crm-feedback.json', { create: true });
+      const { lijst, lastModified } = await leesFeedbackBestand(fh);
+      feedbackHandleRef.current = fh; await idbSet(IDB_FB_KEY, fh);
+      feedbackMtimeRef.current = lastModified;
+      setFeedback(prev => mergeFeedback(prev, lijst)); setFeedbackStatus('verbonden');
+    } catch (e) { console.warn('Feedbackbestand in de map niet beschikbaar:', e); }
+  }
   async function heractiveerToegang() {
     setMenuOpen(false);
     try {
       const map = mapRef.current || await idbGet(IDB_KEY);
       if (!map) { setSyncStatus('niet-gekoppeld'); return; }
       const perm = await map.requestPermission({ mode: 'readwrite' });
-      if (perm === 'granted') { mapRef.current = map; await verbind(CGSYNC.fsaAdapter(map), map.name, false); }
+      if (perm === 'granted') { mapRef.current = map; if (await verbind(CGSYNC.fsaAdapter(map), map.name, false)) await feedbackInMap(map); }
       else setSyncStatus('prompt');
     } catch (e) { setSyncStatus('prompt'); }
   }
@@ -4314,7 +4351,7 @@ function App() {
       const merged = mergeFeedback(lijst, feedback);
       feedbackMtimeRef.current = await schrijfFeedbackBestand(handle, merged);
       setFeedback(merged); setFeedbackStatus('verbonden');
-    } catch (e) { if (e && e.name !== 'AbortError') alert('Koppelen mislukt: ' + e.message); }
+    } catch (e) { if (e && e.name !== 'AbortError') alert(koppelFoutTekst(e)); }
   }
   async function nieuwFeedbackBestand() {
     setMenuOpen(false);
