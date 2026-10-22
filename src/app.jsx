@@ -1745,6 +1745,44 @@ function InteractieForm({ initial, kansSoorten = KANS_STANDAARD, onSave, onCance
       <Field label="Type">
         <select className={inputCls} value={f.type} onChange={set('type')}>{INTERACTIE_TYPES.map(x=><option key={x}>{x}</option>)}</select>
       </Field>
+      {telt ? (
+        <Field label="Uren partner (urenverantwoording)" full>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-sm text-slate-600 mr-1">Duur</span>
+            {[0.5, 1, 1.5, 2, 3].map(d => (
+              <button key={d} type="button" onClick={() => { setF(p => ({ ...p, duur: d, geenUren: false })); setVraagUren(false); }}
+                className={`text-sm px-3 py-1 rounded-full border ${Number(f.duur) === d && !f.geenUren ? 'bg-brand text-white border-brand' : 'border-slate-300 text-slate-600 hover:border-brand'}`}>{String(d).replace('.', ',')}</button>
+            ))}
+            <input type="number" min="0.5" step="0.5" value={f.geenUren ? '' : (f.duur ?? '')} onChange={e => { setF(p => ({ ...p, duur: e.target.value, geenUren: false })); setVraagUren(false); }}
+              className="w-20 border border-slate-300 rounded-lg px-2 py-1 text-sm" aria-label="Duur in uren" placeholder="uur" />
+            <span className="text-sm text-slate-600 ml-2">× externen</span>
+            <input type="number" min="1" step="1" value={f.aantalExtern ?? 1} onChange={e => setF(p => ({ ...p, aantalExtern: e.target.value }))}
+              className="w-16 border border-slate-300 rounded-lg px-2 py-1 text-sm" aria-label="Aantal externen" />
+            <span className="text-sm text-slate-600">= <strong className="text-ink">{f.geenUren ? '0 uur' : uurTekst(gesprekUren(f))}</strong></span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <span className="text-sm text-slate-600">Telt voor</span>
+            <select value={f.urenCat || catUitKansen(f.kansen)} onChange={e => setF(p => ({ ...p, urenCat: e.target.value }))} className="border border-slate-300 rounded-lg px-2 py-1 text-sm" aria-label="Urencategorie">
+              {UREN_CATS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+            {!f.urenCat && <span className="text-xs text-slate-400">automatisch uit "kans voor" (hieronder)</span>}
+            {f.urenCat && <button type="button" onClick={() => setF(p => ({ ...p, urenCat: '' }))} className="text-xs text-brand hover:underline">weer automatisch</button>}
+          </div>
+          <p className="text-xs text-slate-400 mt-1">Alleen de tijd van externen telt: duur × aantal mensen van buiten Campus Gouda. In halve uren.</p>
+          {f.geenUren && <p className="text-xs text-slate-500 mt-1">Bevestigd: bij dit gesprek horen geen uren (0).</p>}
+          {vraagUren && (
+            <div className="mt-2 border border-amber-300 bg-amber-50 rounded-lg p-3 text-sm space-y-2">
+              <div className="text-amber-900">Bij dit gesprek zijn geen uren ingevuld. Klopt dat?</div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => { setVraagUren(false); onSave({ ...f, duur: 0, geenUren: true, aantalExtern: Math.max(1, parseInt(f.aantalExtern, 10) || 1) }); }} className="px-3 py-1.5 rounded-lg bg-white border border-amber-400 text-amber-900 hover:bg-amber-100">Ja, geen uren (0)</button>
+                <button type="button" onClick={() => setVraagUren(false)} className="px-3 py-1.5 rounded-lg bg-brand text-white hover:bg-branddark">Nee, ik vul de duur in</button>
+              </div>
+            </div>
+          )}
+        </Field>
+      ) : (
+        <p className="sm:col-span-2 text-xs text-slate-400">Gesprek van vóór {CGT.datumDM(UREN_UIT_GESPREKKEN_VANAF)}: de uren hiervan staan in de handmatige urenregistratie.</p>
+      )}
       <Field label="Wie van Campus Gouda was erbij?" full>
         {TEAM_NAMEN.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mb-2">
@@ -1770,44 +1808,6 @@ function InteractieForm({ initial, kansSoorten = KANS_STANDAARD, onSave, onCance
           <button type="button" onClick={voegSoortToe} className="px-3 py-2 rounded-lg border border-slate-300 text-sm hover:bg-slate-50 shrink-0">Toevoegen</button>
         </div>
       </Field>
-      {telt ? (
-        <Field label="Uren partner (urenverantwoording)" full>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-sm text-slate-600 mr-1">Duur</span>
-            {[0.5, 1, 1.5, 2, 3].map(d => (
-              <button key={d} type="button" onClick={() => { setF(p => ({ ...p, duur: d, geenUren: false })); setVraagUren(false); }}
-                className={`text-sm px-3 py-1 rounded-full border ${Number(f.duur) === d && !f.geenUren ? 'bg-brand text-white border-brand' : 'border-slate-300 text-slate-600 hover:border-brand'}`}>{String(d).replace('.', ',')}</button>
-            ))}
-            <input type="number" min="0.5" step="0.5" value={f.geenUren ? '' : (f.duur ?? '')} onChange={e => { setF(p => ({ ...p, duur: e.target.value, geenUren: false })); setVraagUren(false); }}
-              className="w-20 border border-slate-300 rounded-lg px-2 py-1 text-sm" aria-label="Duur in uren" placeholder="uur" />
-            <span className="text-sm text-slate-600 ml-2">× externen</span>
-            <input type="number" min="1" step="1" value={f.aantalExtern ?? 1} onChange={e => setF(p => ({ ...p, aantalExtern: e.target.value }))}
-              className="w-16 border border-slate-300 rounded-lg px-2 py-1 text-sm" aria-label="Aantal externen" />
-            <span className="text-sm text-slate-600">= <strong className="text-ink">{f.geenUren ? '0 uur' : uurTekst(gesprekUren(f))}</strong></span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 mt-2">
-            <span className="text-sm text-slate-600">Telt voor</span>
-            <select value={f.urenCat || catUitKansen(f.kansen)} onChange={e => setF(p => ({ ...p, urenCat: e.target.value }))} className="border border-slate-300 rounded-lg px-2 py-1 text-sm" aria-label="Urencategorie">
-              {UREN_CATS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-            </select>
-            {!f.urenCat && <span className="text-xs text-slate-400">automatisch uit "kans voor"</span>}
-            {f.urenCat && <button type="button" onClick={() => setF(p => ({ ...p, urenCat: '' }))} className="text-xs text-brand hover:underline">weer automatisch</button>}
-          </div>
-          <p className="text-xs text-slate-400 mt-1">Alleen de tijd van externen telt: duur × aantal mensen van buiten Campus Gouda. In halve uren.</p>
-          {f.geenUren && <p className="text-xs text-slate-500 mt-1">Bevestigd: bij dit gesprek horen geen uren (0).</p>}
-          {vraagUren && (
-            <div className="mt-2 border border-amber-300 bg-amber-50 rounded-lg p-3 text-sm space-y-2">
-              <div className="text-amber-900">Bij dit gesprek zijn geen uren ingevuld. Klopt dat?</div>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => { setVraagUren(false); onSave({ ...f, duur: 0, geenUren: true, aantalExtern: Math.max(1, parseInt(f.aantalExtern, 10) || 1) }); }} className="px-3 py-1.5 rounded-lg bg-white border border-amber-400 text-amber-900 hover:bg-amber-100">Ja, geen uren (0)</button>
-                <button type="button" onClick={() => setVraagUren(false)} className="px-3 py-1.5 rounded-lg bg-brand text-white hover:bg-branddark">Nee, ik vul de duur in</button>
-              </div>
-            </div>
-          )}
-        </Field>
-      ) : (
-        <p className="sm:col-span-2 text-xs text-slate-400">Gesprek van vóór {CGT.datumDM(UREN_UIT_GESPREKKEN_VANAF)}: de uren hiervan staan in de handmatige urenregistratie.</p>
-      )}
       <Field label="Vervolgacties (met deadline en eigenaar)" full>
         <div className="space-y-2 mb-2">
           {f.acties.map(a => (
