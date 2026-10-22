@@ -23,11 +23,22 @@ const TRAJECT_TYPES = ['Nieuw traject', 'Eerder onderzocht'];
 // Keuzelijsten senior/junior: gevuld uit de gegevens (zie vulTeamLijsten), nooit vaste namen in de code
 const SENIOREN = [];
 const JUNIOREN = [];
-function vulTeamLijsten(trajecten) {
-  const uniek = (k) => [...new Set((trajecten || []).map(t => String(t[k] || '').trim()).filter(Boolean))]
+function vulTeamLijsten(trajecten, team) {
+  const uitTeam = (re) => (team || []).filter(p => re.test(String(p.rol || ''))).map(p => String(p.naam || '').trim());
+  const uniek = (k, re) => [...new Set([...uitTeam(re), ...(trajecten || []).map(t => String(t[k] || '').trim())].filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, 'nl'));
-  SENIOREN.splice(0, SENIOREN.length, ...uniek('senior'));
-  JUNIOREN.splice(0, JUNIOREN.length, ...uniek('junior'));
+  SENIOREN.splice(0, SENIOREN.length, ...uniek('senior', /senior/i));
+  JUNIOREN.splice(0, JUNIOREN.length, ...uniek('junior', /junior/i));
+}
+// Team: namen en rollen staan in de gegevens (gedeelde map), niet in de code
+const TEAM_ROLLEN = ['Junior projectleider', 'Senior projectleider', 'Programmamanager', 'Office manager', 'Facilitair ondersteuner'];
+const TEAM_NAMEN = [];
+function vulTeamNamen(team) {
+  TEAM_NAMEN.splice(0, TEAM_NAMEN.length, ...[...new Set((team || []).map(p => String(p.naam || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'nl')));
+}
+function sorteerTeam(team) {
+  const plek = (rol) => { const i = TEAM_ROLLEN.findIndex(r => r.toLowerCase() === String(rol || '').trim().toLowerCase()); return i < 0 ? TEAM_ROLLEN.length : i; };
+  return [...(team || [])].sort((a, b) => plek(a.rol) - plek(b.rol) || String(a.naam).localeCompare(String(b.naam), 'nl'));
 }
 const INTERACTIE_TYPES = ['gesprek', 'e-mail', 'meeting', 'telefonisch', 'presentatie'];
 
@@ -81,6 +92,7 @@ const LS_UREN = 'cgt_uren_v1';
 const LS_TARGETS = 'cgt_uren_targets_v1';
 const LS_GROEPEN = 'cgt_groepen_v1';
 const LS_CHECKLIST = 'cgt_checklist_v1';
+const LS_TEAM = 'cgt_team_v1';
 const LS_FEEDBACK = 'cgt_feedback_v1';
 
 // Checklist per traject — fases met items (volgorde = weergavevolgorde)
@@ -2932,7 +2944,7 @@ function TakenTab({ groepen, setGroepen, checklist, onOpenGroep }) {
           <p className="text-sm text-slate-500">{CGT.datumLang(vandaag).replace(/^./, c => c.toUpperCase())} · alles wat er voor de studentengroepen moet gebeuren</p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <input value={naam} onChange={e => setNaam(e.target.value)} placeholder="Jouw naam (zoals bij Contact CG)" className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-56" />
+          <input value={naam} onChange={e => setNaam(e.target.value)} list="cg-team" placeholder="Jouw naam (zoals bij Contact CG)" className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-56" />
           <label className="flex items-center gap-1.5 text-sm text-slate-600"><input type="checkbox" className="accent-brand" checked={alleenMijn} onChange={e => setAlleenMijn(e.target.checked)} />Alleen mijn groepen</label>
           <button onClick={() => setModal({})} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">+ Opvolging</button>
         </div>
@@ -3309,7 +3321,7 @@ function GroepForm({ initial, trajecten, contacten, groepen = [], onSave, onCanc
   });
   const [manualNr, setManualNr] = useState(!isNieuw); // bestaand nummer = handmatig behouden
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
-  const collegas = useMemo(() => [...new Set(contacten.map(c => c.naam).filter(Boolean))].sort(), [contacten]);
+  const collegas = useMemo(() => [...new Set([...TEAM_NAMEN, ...contacten.map(c => c.naam).filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'nl')), [contacten]);
 
   // bij themawijziging het automatische nummer bijwerken (tenzij handmatig aangepast)
   const setThema = (e) => {
@@ -3396,6 +3408,106 @@ function GroepForm({ initial, trajecten, contacten, groepen = [], onSave, onCanc
   );
 }
 
+// Aantekeningen bij een groep of bij studenten: kick-off, voortgangsgesprekken, presentaties
+const AANTEKENING_SOORTEN = ['Kick-off', 'Voortgangsgesprek', 'Tussenpresentatie', 'Eindpresentatie', 'Overig'];
+const AANTEKENING_KLEUR = {
+  'Kick-off': 'bg-sky-50 text-sky-700 border-sky-200', 'Voortgangsgesprek': 'bg-brandlight text-branddark border-brand/30',
+  'Tussenpresentatie': 'bg-amber-50 text-amber-700 border-amber-200', 'Eindpresentatie': 'bg-violet-50 text-violet-700 border-violet-200',
+  'Overig': 'bg-slate-100 text-slate-600 border-slate-200',
+};
+function GroepAantekeningen({ g, onUpdate }) {
+  const studenten = g.studenten || [];
+  const alle = (g.aantekeningen || []).slice().sort((a, b) => String(b.datum).localeCompare(String(a.datum)) || String(b.gemaakt || '').localeCompare(String(a.gemaakt || '')));
+  const [form, setForm] = useState(null); // { soort, datum, tekst, studentIds }
+  const [bewerkId, setBewerkId] = useState(null);
+  const [filter, setFilter] = useState('');
+  const naamVan = id => (studenten.find(st => st.id === id) || {}).naam || 'oud-student';
+  const start = (soort) => { setBewerkId(null); setForm({ soort, datum: CGT.vandaagISO(), tekst: '', studentIds: [] }); };
+  const bewerk = (a) => { setBewerkId(a.id); setForm({ soort: a.soort, datum: a.datum, tekst: a.tekst, studentIds: a.studentIds || [] }); };
+  const wissel = (id) => setForm(f => ({ ...f, studentIds: f.studentIds.includes(id) ? f.studentIds.filter(x => x !== id) : [...f.studentIds, id] }));
+  const opslaan = () => {
+    const tekst = String(form.tekst || '').trim();
+    if (!tekst) return;
+    if (bewerkId) onUpdate(x => ({ ...x, aantekeningen: (x.aantekeningen || []).map(a => a.id === bewerkId ? { ...a, ...form, tekst, gewijzigd: new Date().toISOString() } : a) }));
+    else onUpdate(x => ({ ...x, aantekeningen: [...(x.aantekeningen || []), { id: uid(), ...form, tekst, door: mijnNaam(), gemaakt: new Date().toISOString() }] }));
+    setForm(null); setBewerkId(null);
+  };
+  const weg = (id) => { if (confirm('Deze aantekening verwijderen?')) onUpdate(x => ({ ...x, aantekeningen: (x.aantekeningen || []).filter(a => a.id !== id) })); };
+  const zichtbaar = !filter ? alle : filter.startsWith('soort:') ? alle.filter(a => a.soort === filter.slice(6)) : alle.filter(a => (a.studentIds || []).includes(filter.slice(8)));
+  const telSoort = sr => alle.filter(a => a.soort === sr).length;
+  const telStudent = id => alle.filter(a => (a.studentIds || []).includes(id)).length;
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <h3 className="font-semibold text-ink text-sm">Aantekeningen ({alle.length})</h3>
+        {alle.length > 0 && (
+          <select value={filter} onChange={e => setFilter(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-600" aria-label="Aantekeningen filteren">
+            <option value="">Alle aantekeningen</option>
+            <optgroup label="Soort">{AANTEKENING_SOORTEN.filter(telSoort).map(sr => <option key={sr} value={'soort:' + sr}>{sr} ({telSoort(sr)})</option>)}</optgroup>
+            {studenten.some(st => telStudent(st.id)) && <optgroup label="Student">{studenten.filter(st => telStudent(st.id)).map(st => <option key={st.id} value={'student:' + st.id}>{st.naam || 'student'} ({telStudent(st.id)})</option>)}</optgroup>}
+          </select>
+        )}
+      </div>
+      {!form && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {AANTEKENING_SOORTEN.map(sr => (
+            <button key={sr} type="button" onClick={() => start(sr)} className="px-2.5 py-1 rounded-full border border-slate-300 text-xs text-slate-600 hover:border-brand hover:text-brand">+ {sr}</button>
+          ))}
+        </div>
+      )}
+      {form && (
+        <div className="border border-brand/30 bg-brandlight/30 rounded-lg p-3 mb-3 space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <select value={form.soort} onChange={e => setForm(f => ({ ...f, soort: e.target.value }))} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white" aria-label="Soort aantekening">
+              {AANTEKENING_SOORTEN.map(sr => <option key={sr}>{sr}</option>)}
+            </select>
+            <input type="date" value={form.datum} onChange={e => setForm(f => ({ ...f, datum: e.target.value }))} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white" aria-label="Datum" />
+          </div>
+          {studenten.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="text-slate-500 mr-1">Over:</span>
+              <button type="button" onClick={() => setForm(f => ({ ...f, studentIds: [] }))}
+                className={'px-2 py-0.5 rounded-full border ' + (form.studentIds.length === 0 ? 'bg-brand text-white border-brand' : 'bg-white border-slate-300 text-slate-600')}>Hele groep</button>
+              {studenten.map(st => (
+                <button key={st.id} type="button" onClick={() => wissel(st.id)}
+                  className={'px-2 py-0.5 rounded-full border ' + (form.studentIds.includes(st.id) ? 'bg-brand text-white border-brand' : 'bg-white border-slate-300 text-slate-600')}>{st.naam || 'student'}</button>
+              ))}
+            </div>
+          )}
+          <textarea value={form.tekst} onChange={e => setForm(f => ({ ...f, tekst: e.target.value }))} rows={4} autoFocus
+            placeholder={form.soort === 'Voortgangsgesprek' ? 'Hoe gaat het? Afspraken, zorgen, vervolgstappen…' : 'Wat viel op? Feedback, afspraken, vervolgstappen…'}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40" aria-label="Aantekening" />
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => { setForm(null); setBewerkId(null); }} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm bg-white hover:bg-slate-50">Annuleren</button>
+            <button type="button" onClick={opslaan} disabled={!String(form.tekst || '').trim()} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark disabled:opacity-40">{bewerkId ? 'Opslaan' : 'Toevoegen'}</button>
+          </div>
+        </div>
+      )}
+      {zichtbaar.length === 0 ? (
+        !form && <p className="text-sm text-slate-300">{alle.length ? 'Geen aantekeningen met dit filter.' : 'Nog geen aantekeningen. Kies hierboven wat voor gesprek of moment het was.'}</p>
+      ) : (
+        <div className="space-y-2">
+          {zichtbaar.map(a => (
+            <div key={a.id} className="border border-slate-100 rounded-lg p-2.5 text-sm">
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <Badge className={AANTEKENING_KLEUR[a.soort] || AANTEKENING_KLEUR['Overig']}>{a.soort}</Badge>
+                <span className="text-xs text-slate-500">{a.datum ? CGT.datumDM(a.datum) : ''}</span>
+                <span className="text-xs text-slate-500">· {(a.studentIds || []).length ? (a.studentIds || []).map(naamVan).join(', ') : 'hele groep'}</span>
+                <span className="ml-auto flex gap-2 text-xs">
+                  <button type="button" onClick={() => bewerk(a)} className="text-brand hover:underline">bewerken</button>
+                  <button type="button" onClick={() => weg(a.id)} className="text-slate-400 hover:text-rose-600">verwijderen</button>
+                </span>
+              </div>
+              <div className="text-slate-700 whitespace-pre-wrap">{a.tekst}</div>
+              {a.door && <div className="text-xs text-slate-400 mt-1">door {a.door}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdate, setGroepen, onBack, onEdit, onDelete, onOpenTraject }) {
   const g = groep;
   const vandaag = CGT.vandaagISO();
@@ -3458,6 +3570,7 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
               </div>
             </div>
           </div>
+          <GroepAantekeningen key={'aant-' + g.id} g={g} onUpdate={onUpdate} />
         </div>
         <div className="space-y-5 min-w-0">
           <GroepOpvolging g={g} setGroepen={setGroepen} onNieuw={setOpvolg} />
@@ -3474,6 +3587,7 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
                       <span className="font-medium text-ink">{s.naam || '—'}</span>
                       {s.isContact && <Badge className="bg-brandlight text-branddark border-brand/30">contactpersoon</Badge>}
                       {s.woonplaats && <span className="text-slate-400 text-xs">{s.woonplaats}</span>}
+                      {(() => { const n = (g.aantekeningen || []).filter(a => (a.studentIds || []).includes(s.id)).length; return n ? <span className="ml-auto text-xs text-slate-400" title="Aantekeningen over deze student">📝 {n}</span> : null; })()}
                     </div>
                     <div className="text-xs text-slate-500 mt-0.5 flex flex-wrap gap-x-3">
                       {s.mail && <a className="text-brand hover:underline" href={'mailto:'+s.mail}>{s.mail}</a>}
@@ -3941,17 +4055,18 @@ function coreFromData(d) {
     targets: (d.targets && typeof d.targets === 'object') ? d.targets : {},
     groepen: Array.isArray(d.groepen) ? d.groepen : [],
     checklist: (d.checklist && typeof d.checklist === 'object') ? d.checklist : {},
+    team: Array.isArray(d.team) ? d.team : [],
     feedback: Array.isArray(d.feedback) ? d.feedback : [],
   };
 }
 // stabiele string van de datasets (zónder vluchtige exportedAt) voor wijzigingsdetectie
 // feedback zit NIET in de hoofdbundel — die heeft een eigen koppelbaar bestand
 function coreString(c) {
-  return JSON.stringify([c.trajecten, c.contacten, c.uren, c.targets, c.groepen, c.checklist]);
+  return JSON.stringify([c.trajecten, c.contacten, c.uren, c.targets, c.groepen, c.checklist, c.team || []]);
 }
 function buildPayload(c) {
   return { app: 'Campus Gouda CRM', version: 4, exportedAt: new Date().toISOString(),
-    trajecten: c.trajecten, contacten: c.contacten, uren: c.uren, targets: c.targets, groepen: c.groepen, checklist: c.checklist };
+    trajecten: c.trajecten, contacten: c.contacten, uren: c.uren, targets: c.targets, groepen: c.groepen, checklist: c.checklist, team: c.team || [] };
 }
 // --- los feedbackbestand (crm-feedback.json) ---
 function feedbackUitData(d) { return (d && Array.isArray(d.feedback)) ? d.feedback : (Array.isArray(d) ? d : []); }
@@ -4010,6 +4125,36 @@ function koppelFoutTekst(e) {
       '• Draait OneDrive (wolkje met groen vinkje)?\n\nTechnisch: ' + tech;
   }
   return 'Koppelen mislukt: ' + tech;
+}
+
+// Team en rollen beheren (staat in de gedeelde gegevens, dus iedereen ziet hetzelfde team)
+function TeamBeheer({ team, onSave, onCancel }) {
+  const [rijen, setRijen] = useState(() => sorteerTeam(team).map(p => ({ ...p })));
+  const zet = (id, k, v) => setRijen(prev => prev.map(r => r.id === id ? { ...r, [k]: v } : r));
+  const voegToe = () => setRijen(prev => [...prev, { id: uid(), naam: '', rol: '' }]);
+  const weg = (id) => setRijen(prev => prev.filter(r => r.id !== id));
+  const opslaan = () => onSave(sorteerTeam(rijen.map(r => ({ ...r, naam: String(r.naam || '').trim(), rol: String(r.rol || '').trim() })).filter(r => r.naam)));
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-slate-500">Wie werkt er bij Campus Gouda, en in welke rol? Deze namen komen in de keuzelijsten: senior, junior, contact Campus Gouda en "jouw naam". Het team staat in de gedeelde map, dus iedereen ziet hetzelfde.</p>
+      {rijen.length === 0 && <p className="text-sm text-slate-400 italic">Nog niemand ingevuld. Klik op "+ Persoon toevoegen".</p>}
+      <div className="space-y-2">
+        {rijen.map(r => (
+          <div key={r.id} className="flex flex-wrap gap-2 items-center">
+            <div className="flex-1 min-w-[140px]"><input className={inputCls} value={r.naam} onChange={e => zet(r.id, 'naam', e.target.value)} placeholder="Naam" aria-label="Naam" /></div>
+            <div className="flex-1 min-w-[190px]"><input className={inputCls} list="cg-team-rollen" value={r.rol} onChange={e => zet(r.id, 'rol', e.target.value)} placeholder="Rol (kies of typ)" aria-label="Rol" /></div>
+            <button type="button" onClick={() => weg(r.id)} className="px-2 py-1 text-slate-400 hover:text-red-600" title="Verwijderen" aria-label={'Verwijder ' + (r.naam || 'persoon')}>✕</button>
+          </div>
+        ))}
+      </div>
+      <datalist id="cg-team-rollen">{TEAM_ROLLEN.map(x => <option key={x} value={x} />)}</datalist>
+      <button type="button" onClick={voegToe} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">+ Persoon toevoegen</button>
+      <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+        <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">Annuleren</button>
+        <button type="button" onClick={opslaan} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">Opslaan</button>
+      </div>
+    </div>
+  );
 }
 
 // Feedback-paneel (in een modal) — opmerking achterlaten + verzamelde opmerkingen
@@ -4076,7 +4221,6 @@ function App() {
     const stored = loadLS(LS_TRAJ, null);
     return stored || seedTrajecten();
   });
-  vulTeamLijsten(trajecten);
   const [contacten, setContacten] = useState(() => {
     const stored = loadLS(LS_CONT, null);
     return stored || [];
@@ -4085,6 +4229,10 @@ function App() {
   const [targets, setTargets] = useState(() => loadLS(LS_TARGETS, {}) || {});
   const [groepen, setGroepen] = useState(() => loadLS(LS_GROEPEN, []) || []);
   const [checklist, setChecklist] = useState(() => loadLS(LS_CHECKLIST, {}) || {});
+  const [team, setTeam] = useState(() => loadLS(LS_TEAM, []) || []);
+  vulTeamNamen(team);
+  vulTeamLijsten(trajecten, team);
+  const [teamOpen, setTeamOpen] = useState(false);
   const [feedback, setFeedback] = useState(() => loadLS(LS_FEEDBACK, []) || []);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackStatus, setFeedbackStatus] = useState(FSA_SUPPORTED ? 'niet-gekoppeld' : 'unsupported'); // niet-gekoppeld | verbonden | prompt | unsupported
@@ -4111,7 +4259,7 @@ function App() {
   const mapRef = React.useRef(null);
   const schrijfTimer = React.useRef(null);
   const liveCoreRef = React.useRef(null);
-  liveCoreRef.current = { trajecten, contacten, uren, targets, groepen, checklist, feedback };
+  liveCoreRef.current = { trajecten, contacten, uren, targets, groepen, checklist, team, feedback };
   const nowHHMM = () => new Date().toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
 
   // seed contacten op basis van trajecten bij eerste run
@@ -4128,12 +4276,13 @@ function App() {
   useEffect(() => saveLS(LS_TARGETS, targets), [targets]);
   useEffect(() => saveLS(LS_GROEPEN, groepen), [groepen]);
   useEffect(() => saveLS(LS_CHECKLIST, checklist), [checklist]);
+  useEffect(() => saveLS(LS_TEAM, team), [team]);
   useEffect(() => saveLS(LS_FEEDBACK, feedback), [feedback]);
 
   function applyBundle(data) {
     const c = coreFromData(data);
     setTrajecten(c.trajecten); setContacten(c.contacten); setUren(c.uren);
-    setTargets(c.targets); setGroepen(c.groepen); setChecklist(c.checklist);
+    setTargets(c.targets); setGroepen(c.groepen); setChecklist(c.checklist); setTeam(c.team);
   }
   function wieBenIk() {
     let id = loadLS('cgt_gebruikerid', '');
@@ -4234,12 +4383,12 @@ function App() {
   useEffect(() => {
     const sync = syncRef.current;
     if (!sync || syncStatus !== 'verbonden') return;
-    const n = sync.registreer({ trajecten, contacten, uren, targets, groepen, checklist });
+    const n = sync.registreer({ trajecten, contacten, uren, targets, groepen, checklist, team });
     if (!n) return;
     setSavingState('saving');
     clearTimeout(schrijfTimer.current);
     schrijfTimer.current = setTimeout(schrijfNu, 700);
-  }, [trajecten, contacten, uren, targets, groepen, checklist, syncStatus]);
+  }, [trajecten, contacten, uren, targets, groepen, checklist, team, syncStatus]);
 
   // wijzigingen van collega's ophalen
   useEffect(() => {
@@ -4431,6 +4580,7 @@ function App() {
       if (data.targets && typeof data.targets === 'object') setTargets(data.targets);
       if (Array.isArray(data.groepen)) setGroepen(data.groepen);
       if (data.checklist && typeof data.checklist === 'object') setChecklist(data.checklist);
+      if (Array.isArray(data.team)) setTeam(data.team);
       setMenuOpen(false);
       alert('Back-up geïmporteerd.');
     };
@@ -4551,6 +4701,9 @@ function App() {
                     </>
                   )}
                   <div className="border-t border-slate-100 my-2"></div>
+                  <div className="text-xs font-semibold text-ink mb-1">Team</div>
+                  <button onClick={() => { setMenuOpen(false); setTeamOpen(true); }} className="w-full mb-1 px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-50">👥 Team en rollen… {team.length ? `(${team.length})` : ''}</button>
+                  <div className="border-t border-slate-100 my-2"></div>
                   <div className="text-xs font-semibold text-ink mb-1">Handmatige back-up</div>
                   <p className="text-xs text-slate-400 mb-2">Een losse momentopname — <strong>niet</strong> de live opslag. Wijzigingen hierna worden niet automatisch in dit bestand bijgewerkt.</p>
                   <button onClick={exportData} className="w-full mb-2 px-3 py-2 rounded-lg bg-brand text-white font-medium hover:bg-branddark">Exporteer momentopname (JSON)</button>
@@ -4643,6 +4796,11 @@ function App() {
         {' '}· <button onClick={() => setFeedbackOpen(true)} className="underline hover:text-slate-600">feedback</button>
         {APP_VERSIE && <>{' '}· <span title={'Versie ' + APP_VERSIE}>versie {APP_VERSIE.split('-')[0]}</span></>}
       </footer>
+
+      <Modal open={teamOpen} onClose={() => setTeamOpen(false)} title="Team en rollen">
+        {teamOpen && <TeamBeheer team={team} onSave={(t) => { setTeam(t); setTeamOpen(false); }} onCancel={() => setTeamOpen(false)} />}
+      </Modal>
+      <datalist id="cg-team">{TEAM_NAMEN.map(n => <option key={n} value={n} />)}</datalist>
 
       <Modal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} title="Feedback van collega's">
         <FeedbackBody feedback={feedback} status={feedbackStatus}

@@ -50,6 +50,11 @@ if (fs.existsSync(INTERN)) {
     if (m) for (const n of m[1].matchAll(/'([^']+)'/g)) { zoek.push({ tekst: n[1], soort: 'collega' }); internGelezen = true; }
   }
 }
+// extra namen (bijv. het team): één naam per regel in privacy-namen.txt naast de interne versie (niet openbaar)
+const EXTRA = process.env.CRM_NAMEN || path.resolve(PWA, '../nieuwe versie met taken (NIET DELEN)/privacy-namen.txt');
+if (fs.existsSync(EXTRA)) {
+  for (const n of fs.readFileSync(EXTRA, 'utf8').split(/\r?\n/).map(x => x.trim()).filter(x => x && !x.startsWith('#'))) zoek.push({ tekst: n, soort: 'collega' });
+}
 
 let dataGelezen = false;
 if (fs.existsSync(DATA)) {

@@ -78,6 +78,18 @@ const kloon = x => JSON.parse(JSON.stringify(x));
   mensen.forEach(m => assert.deepStrictEqual(m.kern.groepen.map(g => g.id).sort(), ['g1', 'g2', 'g3', 'g4']));
   console.log('5 ok: groepen van twee mensen allebei toegevoegd');
 
+  // 5b. team en rollen: twee mensen voegen tegelijk iemand toe, een derde past een rol aan
+  wijzig(mensen[0], k => { k.team = k.team || []; k.team.push({ id: 'p1', naam: 'Persoon Een', rol: 'Junior projectleider' }); });
+  wijzig(mensen[1], k => { k.team = k.team || []; k.team.push({ id: 'p2', naam: 'Persoon Twee', rol: 'Office manager' }); });
+  for (let i = 0; i < 4; i++) await ronde();
+  wijzig(mensen[2], k => { k.team.find(p => p.id === 'p1').rol = 'Senior projectleider'; });
+  for (let i = 0; i < 4; i++) await ronde();
+  mensen.forEach(m => {
+    assert.deepStrictEqual(m.kern.team.map(p => p.id).sort(), ['p1', 'p2'], m.naam + ' team');
+    assert.strictEqual(m.kern.team.find(p => p.id === 'p1').rol, 'Senior projectleider', m.naam + ' rol');
+  });
+  console.log('5b ok: team en rollen bij iedereen gelijk');
+
   // 6. opnieuw opstarten (pagina herladen): stand komt terug, volgnummers lopen door
   const herstart = S.maakSync(map.adapter('Tester-B', 2), { id: 'tester-b00000', naam: 'Tester-B' }, { nu: () => klok });
   const k6 = await herstart.start();

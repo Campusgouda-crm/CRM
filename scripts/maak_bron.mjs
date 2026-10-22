@@ -70,11 +70,12 @@ app = eenKeer(app,
   `// Keuzelijsten senior/junior: gevuld uit de gegevens (zie vulTeamLijsten), nooit vaste namen in de code
 const SENIOREN = [];
 const JUNIOREN = [];
-function vulTeamLijsten(trajecten) {
-  const uniek = (k) => [...new Set((trajecten || []).map(t => String(t[k] || '').trim()).filter(Boolean))]
+function vulTeamLijsten(trajecten, team) {
+  const uitTeam = (re) => (team || []).filter(p => re.test(String(p.rol || ''))).map(p => String(p.naam || '').trim());
+  const uniek = (k, re) => [...new Set([...uitTeam(re), ...(trajecten || []).map(t => String(t[k] || '').trim())].filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, 'nl'));
-  SENIOREN.splice(0, SENIOREN.length, ...uniek('senior'));
-  JUNIOREN.splice(0, JUNIOREN.length, ...uniek('junior'));
+  SENIOREN.splice(0, SENIOREN.length, ...uniek('senior', /senior/i));
+  JUNIOREN.splice(0, JUNIOREN.length, ...uniek('junior', /junior/i));
 }`,
   'SENIOREN/JUNIOREN');
 
@@ -94,9 +95,9 @@ app = eenKeer(app,
   'keuzelijst junior');
 
 app = eenKeer(app,
-  `  const [contacten, setContacten] = useState(() => {`,
-  `  vulTeamLijsten(trajecten);
-  const [contacten, setContacten] = useState(() => {`,
+  `  vulTeamNamen(team);`,
+  `  vulTeamNamen(team);
+  vulTeamLijsten(trajecten, team);`,
   'vulTeamLijsten in App');
 
 // 3b. startgegevens eruit: de app start leeg en laadt alles uit de gedeelde map

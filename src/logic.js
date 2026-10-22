@@ -332,10 +332,10 @@
     if (g.gearchiveerd) return uit;
     const p = planning(g, vandaag), m = p.m, k = datumKort;
     // AVG: een jaar na afloop studentgegevens opschonen (ook als de groep verder geschiedenis is)
-    if (p.eindDatum && diffDays(vandaag, p.eindDatum) > 365 && !g.geanonimiseerd && (g.studenten || []).some(st => st.naam || st.mail || st.telefoon)) {
+    if (p.eindDatum && diffDays(vandaag, p.eindDatum) > 365 && !g.geanonimiseerd && ((g.studenten || []).some(st => st.naam || st.mail || st.telefoon) || (g.aantekeningen || []).length)) {
       uit.push({ id: g.id + ':avg', groepId: g.id, regel: 'avg', niveau: 'gegevens', titel: 'Studentgegevens opschonen (AVG)',
         tekst: `De groep is sinds ${k(p.eindDatum)} klaar, langer dan een jaar. Haal namen en contactgegevens van de studenten weg; de groep zelf blijft bewaard.`,
-        actie: { label: 'Gegevens opschonen', soort: 'anonimiseer', bevestig: 'Namen, mailadressen, telefoonnummers en woonplaatsen van de studenten in deze groep weghalen? Dit kan niet ongedaan worden gemaakt.' } });
+        actie: { label: 'Gegevens opschonen', soort: 'anonimiseer', bevestig: 'Namen, mailadressen, telefoonnummers en woonplaatsen van de studenten in deze groep weghalen, en alle aantekeningen? Dit kan niet ongedaan worden gemaakt.' } });
     }
     if (p.eindDatum && diffDays(vandaag, p.eindDatum) > 56) { const v = g.verborgen || {}; uit.forEach(x => { x.verborgen = !!(v[x.regel] && v[x.regel] > vandaag); }); return uit; } // ruim voorbij: geschiedenis
     const add = (regel, niveau, titel, tekst, extra) => uit.push(Object.assign({ id: g.id + ':' + regel, groepId: g.id, regel, niveau, titel, tekst }, extra || {}));
@@ -457,7 +457,7 @@
     const b = bijzonderhedenVan(g);
     if (a.soort === 'ogUitgenodigd') return Object.assign({}, g, { bijzonderheden: Object.assign({}, b, { [a.pres]: Object.assign({}, b[a.pres], { ogUitgenodigd: true }) }) });
     if (a.soort === 'contactVandaag') return Object.assign({}, g, { contact: Object.assign({}, g.contact, { laatste: vandaagISO() }) });
-    if (a.soort === 'anonimiseer') return Object.assign({}, g, { geanonimiseerd: vandaagISO(),
+    if (a.soort === 'anonimiseer') return Object.assign({}, g, { geanonimiseerd: vandaagISO(), aantekeningen: [],
       studenten: (g.studenten || []).map((st, i) => Object.assign({}, st, { naam: 'Student ' + (i + 1), mail: '', telefoon: '', priveMail: '', woonplaats: '' })) });
     if (a.soort === 'eisKlaar') return Object.assign({}, g, { bijzonderheden: Object.assign({}, b, { eisen: b.eisen.map(e => e.id === a.eis ? Object.assign({}, e, { klaar: true }) : e) }) });
     return g;
