@@ -1,0 +1,21 @@
+{
+  "name": "campus-gouda-crm",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Campus Gouda CRM als installeerbare web-app. Bevat geen gegevens: die staan in de gedeelde SharePoint-map.",
+  "scripts": {
+    "bouw": "node scripts/bouw.mjs",
+    "controle": "node scripts/privacycontrole.mjs dist src",
+    "test": "node scripts/test_sync.js"
+  },
+  "devDependencies": {
+    "@babel/core": "7.26.0",
+    "@babel/preset-react": "7.26.3",
+    "@fontsource/manrope": "5.1.1",
+    "chart.js": "4.4.7",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tailwindcss": "3.4.17",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  }
+}

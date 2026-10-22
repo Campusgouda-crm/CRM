@@ -1,0 +1,17 @@
+# afhankelijkheden en bouwresultaat
+node_modules
+node_modules.nosync
+dist
+.bouw-invoer.css
+
+# NOOIT gegevens in deze repository
+crm-data*.json
+crm-feedback*.json
+crm-wijzigingen/
+*.xlsx
+*.xls
+*.csv
+*.docx
+
+# systeem
+.DS_Store
