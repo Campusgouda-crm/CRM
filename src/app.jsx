@@ -123,6 +123,10 @@ const THEMA_KLEUR = {
   'Logistiek': 'bg-themalogistiek/30 text-ink border-themalogistiek',
   'Overig':    'bg-midgroen/25 text-ink border-midgroen',
 };
+// themakleur als streep links (taken, opvolgingen, groepen) en als zacht vlak (kop van de groepspagina)
+const THEMA_STREEP = { 'Zorg': 'border-l-themazorg', 'Bodem': 'border-l-themabodem', 'Logistiek': 'border-l-themalogistiek', 'Overig': 'border-l-midgroen' };
+const THEMA_VLAK = { 'Zorg': 'bg-themazorg/15', 'Bodem': 'bg-themabodem/20', 'Logistiek': 'bg-themalogistiek/25', 'Overig': 'bg-midgroen/15' };
+const themaStreep = g => 'border-l-4 ' + (THEMA_STREEP[g && g.thema] || 'border-l-transparent');
 
 // --- Uren-registratie ---
 const UREN_THEMAS = ['Zorg', 'Bodem', 'Logistiek', 'Overig'];
@@ -3032,7 +3036,7 @@ function OpvolgRegel({ item, metGroep, onKlaar, onUitstel, onWeg, onOpenGroep, o
   const { groep: g, taak: t, dagen, klaar, waarom } = item;
   const sj = t.moment ? CGT.MAILSJABLONEN.find(s => s.moment === t.moment) : null;
   return (
-    <div className="flex flex-wrap sm:flex-nowrap items-start gap-x-3 gap-y-2 px-4 py-3">
+    <div className={themaStreep(g) + ' flex flex-wrap sm:flex-nowrap items-start gap-x-3 gap-y-2 px-4 py-3'}>
       <div className="min-w-0 flex-1">
         {metGroep && <button onClick={() => onOpenGroep(g.id)} className="text-left text-xs text-slate-500 hover:underline"><span className="font-semibold text-ink">{g.groepsnummer}</span> {g.titel}</button>}
         <div className={`text-sm ${klaar ? 'line-through text-slate-400' : 'text-slate-800 font-medium'}`}>{t.tekst}</div>
@@ -3059,7 +3063,7 @@ function OpvolgRegel({ item, metGroep, onKlaar, onUitstel, onWeg, onOpenGroep, o
 function SignaalRegel({ s, metGroep, onOpenGroep, onLater, onGemaild, onActie, compact }) {
   const g = s.groep;
   return (
-    <div className={compact ? 'flex flex-col gap-1 px-3 py-2.5' : 'flex flex-wrap sm:flex-nowrap gap-x-3 gap-y-1 px-4 py-3'}>
+    <div className={themaStreep(g) + ' ' + (compact ? 'flex flex-col gap-1 px-3 py-2.5' : 'flex flex-wrap sm:flex-nowrap gap-x-3 gap-y-1 px-4 py-3')}>
       <div className={compact ? '' : 'pt-0.5 w-full sm:w-[124px] shrink-0'}><NiveauPill niveau={s.niveau} /></div>
       <div className="min-w-0 flex-1">
         {metGroep && <button onClick={() => onOpenGroep(g.id)} className="text-left text-xs text-slate-500 hover:underline"><span className="font-semibold text-ink">{g.groepsnummer}</span> {g.titel}{g.contactCG ? ' · ' + g.contactCG : ''}</button>}
@@ -3103,7 +3107,7 @@ function Kop({ titel, sub, rechts }) {
 /* ============================================================
    TABBLAD TAKEN: wat moet er gebeuren?
    ============================================================ */
-function TakenTab({ groepen, setGroepen, checklist, onOpenGroep, contacten = [], setContacten, onOpenContact }) {
+function TakenTab({ groepen, setGroepen, checklist, onOpenGroep, contacten = [], setContacten, onOpenContact, welkomFoto = '' }) {
   const verlopenContacten = useMemo(() => (contacten || []).filter(c => bewaarVerlopen(c)).sort((a, b) => bewaarDatum(a).localeCompare(bewaarDatum(b))), [contacten]);
   const behoudContact = (id) => setContacten && setContacten(prev => prev.map(x => x.id === id ? { ...x, bewaarCheck: CGT.vandaagISO() } : x));
   const verwijderContact = (c) => {
@@ -3135,11 +3139,24 @@ function TakenTab({ groepen, setGroepen, checklist, onOpenGroep, contacten = [],
 
   return (
     <div>
+      {(() => {
+        const uur = new Date().getHours();
+        const groet = uur < 12 ? 'Goedemorgen' : uur < 18 ? 'Goedemiddag' : 'Goedenavond';
+        const voornaam = String(naam || '').trim().split(/\s+/)[0];
+        const urgent = tel('urgent'), week = tel('dezeweek');
+        const samen = [urgent ? urgent + ' urgent' : 'niets urgents', week ? week + ' deze week' : '', o.opvolgen.length ? o.opvolgen.length + ' op te volgen' : ''].filter(Boolean).join(' · ');
+        return (
+          <div className={'relative overflow-hidden rounded-2xl mb-3 ' + (welkomFoto ? 'bg-ink' : 'bg-brandlight')}>
+            {welkomFoto && <img src={welkomFoto} alt="" className="absolute inset-0 w-full h-full object-cover opacity-60" />}
+            <div className="relative px-5 py-6 min-h-[132px] flex flex-col justify-end">
+              <h1 className={'text-2xl font-semibold ' + (welkomFoto ? 'text-white' : 'text-ink')}>{groet}{voornaam ? ', ' + voornaam : ''}</h1>
+              <p className={'text-sm ' + (welkomFoto ? 'text-white' : 'text-branddark')}>{CGT.datumLang(vandaag).replace(/^./, c => c.toUpperCase())} · {samen}</p>
+            </div>
+          </div>
+        );
+      })()}
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        <div>
-          <h1 className="text-2xl font-light text-ink">Taken</h1>
-          <p className="text-sm text-slate-500">{CGT.datumLang(vandaag).replace(/^./, c => c.toUpperCase())} · alles wat er voor de studentengroepen moet gebeuren</p>
-        </div>
+        <div className="text-sm text-slate-500">Taken: alles wat er voor de studentengroepen moet gebeuren</div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <input value={naam} onChange={e => setNaam(e.target.value)} list="cg-team" placeholder="Jouw naam (zoals bij Contact CG)" className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-56" />
           <label className="flex items-center gap-1.5 text-sm text-slate-600"><input type="checkbox" className="accent-brand" checked={alleenMijn} onChange={e => setAlleenMijn(e.target.checked)} />Alleen mijn groepen</label>
@@ -3158,12 +3175,12 @@ function TakenTab({ groepen, setGroepen, checklist, onOpenGroep, contacten = [],
 
       <Kop titel="Opvolgen" sub="Herinneringen die je zelf hebt gezet, bijvoorbeeld na het mailen van een groep." />
       {o.opvolgen.length === 0
-        ? <div className="bg-white rounded-xl border border-dashed border-slate-300 px-4 py-4 text-sm text-slate-500">Niets op te volgen vandaag. Mail je een groep, dan zet je hier met één klik een herinnering.</div>
+        ? <div className="bg-brandlight/30 rounded-xl border border-dashed border-brandlight px-4 py-4 text-sm text-branddark">Niets op te volgen vandaag. Mail je een groep, dan zet je hier met één klik een herinnering.</div>
         : <Lijst>{o.opvolgen.map(it => <OpvolgRegel key={it.taak.id} item={it} metGroep onKlaar={acties.klaar} onUitstel={acties.uitstel} onWeg={acties.weg} onOpenGroep={onOpenGroep} onMail />)}</Lijst>}
 
       <Kop titel="Wat moet er gebeuren" sub="Berekend uit de planning van elke groep: presentaties die nog niet vastliggen, momenten deze week en afronding." />
       {hoofd.length === 0
-        ? <div className="bg-white rounded-xl border border-dashed border-slate-300 px-4 py-4 text-sm text-slate-500">Er hoeven nu geen kick-offs of presentaties ingepland te worden.</div>
+        ? <div className="bg-brandlight/30 rounded-xl border border-dashed border-brandlight px-4 py-4 text-sm text-branddark">Er hoeven nu geen kick-offs of presentaties ingepland te worden.</div>
         : <Lijst>{hoofd.map(s => <SignaalRegel key={s.id} s={s} metGroep onOpenGroep={onOpenGroep} onLater={acties.later} onGemaild={gemaild} onActie={acties.actie} />)}</Lijst>}
 
       {overig.length > 0 && (<>
@@ -3928,7 +3945,7 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
   return (
     <div>
       <button onClick={onBack} className="text-sm text-brand hover:underline mb-3">&larr; Terug</button>
-      <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+      <div className={'flex flex-wrap items-start justify-between gap-4 mb-4 rounded-xl px-4 py-3 ' + (THEMA_VLAK[g.thema] || 'bg-slate-50') + ' ' + themaStreep(g)}>
         <div>
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             {g.thema && <Badge className={THEMA_KLEUR[g.thema] || THEMA_KLEUR['Overig']}>{g.thema}</Badge>}
@@ -4405,7 +4422,7 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
           <tbody>
             {filtered.map(g => (
               <tr key={g.id} onClick={() => setDetailId(g.id)} className="border-t border-slate-100 hover:bg-brandlight/40 cursor-pointer">
-                <td className="px-3 py-2 font-medium text-ink">{g.groepsnummer}</td>
+                <td className={'px-3 py-2 font-medium text-ink ' + themaStreep(g)}>{g.groepsnummer}</td>
                 <td className="px-3 py-2">{g.thema ? <Badge className={THEMA_KLEUR[g.thema]||THEMA_KLEUR['Overig']}>{g.thema}</Badge> : '—'}</td>
                 <td className="px-3 py-2 text-slate-600">{g.onderwijsinstelling || '—'}</td>
                 <td className="px-3 py-2 text-slate-600">{g.titel || '—'}</td>
@@ -4832,6 +4849,29 @@ function App() {
   }
   // verbinden met een gedeelde map
   const syncMapRef = React.useRef('');
+  // welkomstfoto: elke dag een andere foto uit de map "beelden" in de gekoppelde map (de foto's blijven in SharePoint)
+  const [welkomFoto, setWelkomFoto] = useState('');
+  useEffect(() => {
+    let url = '', weg = false;
+    (async () => {
+      const testFoto = TEST_MAP ? TEST_PARAMS.get('testfoto') : '';
+      if (testFoto) { setWelkomFoto(testFoto); return; }
+      const map = mapRef.current;
+      if (syncStatus !== 'verbonden' || !map || !map.getDirectoryHandle) { setWelkomFoto(''); return; }
+      try {
+        const dir = await map.getDirectoryHandle('beelden');
+        const fotos = [];
+        for await (const [naam, h] of dir.entries()) if (h.kind === 'file' && /\.(jpe?g|png|webp)$/i.test(naam)) fotos.push(h);
+        if (!fotos.length || weg) return;
+        fotos.sort((a, b) => a.name.localeCompare(b.name));
+        const bestand = await fotos[Math.floor(Date.now() / 864e5) % fotos.length].getFile();
+        if (weg) return;
+        url = URL.createObjectURL(bestand);
+        setWelkomFoto(url);
+      } catch (e) { setWelkomFoto(''); }
+    })();
+    return () => { weg = true; if (url) URL.revokeObjectURL(url); };
+  }, [syncStatus]);
   function bewaarSyncStand() {
     const sy = syncRef.current;
     if (sy && sy.s && sy.s.laatsteKern) saveLS(LS_SYNC_STAND, { map: syncMapRef.current, kern: sy.s.laatsteKern });
@@ -5314,7 +5354,7 @@ function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
         {tab === 'taken' && (
           <TakenTab groepen={groepen} setGroepen={setGroepen} checklist={checklist} onOpenGroep={openGroepFromTaken}
-            contacten={contacten} setContacten={setContactenMetUren} onOpenContact={(id) => { setTab('contacten'); setOpenContactId(id); }} />
+            contacten={contacten} setContacten={setContactenMetUren} onOpenContact={(id) => { setTab('contacten'); setOpenContactId(id); }} welkomFoto={welkomFoto} />
         )}
         {tab === 'trajecten' && (
           <TrajectenTab
