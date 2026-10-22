@@ -36,6 +36,13 @@ const TEAM_NAMEN = [];
 function vulTeamNamen(team) {
   TEAM_NAMEN.splice(0, TEAM_NAMEN.length, ...[...new Set((team || []).map(p => String(p.naam || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'nl')));
 }
+// "naam1, naam2 en naam3" → ['naam1', 'naam2', 'naam3']
+function naamLijst(tekst) { return String(tekst || '').split(/[,;/&]| en /).map(x => x.trim()).filter(Boolean); }
+function heeftNaam(tekst, naam) { const n = String(naam || '').trim().toLowerCase(); return !!n && naamLijst(tekst).some(x => x.toLowerCase() === n); }
+function wisselNaam(tekst, naam) {
+  const lijst = naamLijst(tekst);
+  return (heeftNaam(tekst, naam) ? lijst.filter(x => x.toLowerCase() !== naam.toLowerCase()) : [...lijst, naam]).join(', ');
+}
 function sorteerTeam(team) {
   const plek = (rol) => { const i = TEAM_ROLLEN.findIndex(r => r.toLowerCase() === String(rol || '').trim().toLowerCase()); return i < 0 ? TEAM_ROLLEN.length : i; };
   return [...(team || [])].sort((a, b) => plek(a.rol) - plek(b.rol) || String(a.naam).localeCompare(String(b.naam), 'nl'));
@@ -1382,7 +1389,7 @@ function ContactForm({ initial, trajecten, contacten = [], onSave, onCancel }) {
         </select>
       </Field>
       <Field label="Eigenaar (Campus Gouda)">
-        <input className={inputCls} value={f.eigenaar || ''} onChange={set('eigenaar')} placeholder="verantwoordelijk teamlid" />
+        <input className={inputCls} list="cg-team" value={f.eigenaar || ''} onChange={set('eigenaar')} placeholder="verantwoordelijk teamlid (kies of typ)" />
       </Field>
       <Field label="Relevant voor thema('s)" full>
         <div className="flex flex-wrap gap-x-4 gap-y-1 border border-slate-200 rounded-lg p-2">
@@ -1650,7 +1657,16 @@ function InteractieForm({ initial, kansSoorten = KANS_STANDAARD, onSave, onCance
         <select className={inputCls} value={f.type} onChange={set('type')}>{INTERACTIE_TYPES.map(x=><option key={x}>{x}</option>)}</select>
       </Field>
       <Field label="Wie van Campus Gouda was erbij?" full>
-        <input className={inputCls} value={f.aanwezig || ''} onChange={set('aanwezig')} placeholder="naam/namen teamlid Campus Gouda" />
+        {TEAM_NAMEN.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {TEAM_NAMEN.map(n => {
+              const aan = heeftNaam(f.aanwezig, n);
+              return <button key={n} type="button" onClick={() => setF(p => ({ ...p, aanwezig: wisselNaam(p.aanwezig, n) }))}
+                className={`text-sm px-3 py-1 rounded-full border ${aan ? 'bg-brand text-white border-brand' : 'border-slate-300 text-slate-600 hover:border-brand'}`}>{aan ? '✓ ' : ''}{n}</button>;
+            })}
+          </div>
+        )}
+        <input className={inputCls} list="cg-team" value={f.aanwezig || ''} onChange={set('aanwezig')} placeholder={TEAM_NAMEN.length ? 'of typ hier een andere naam' : 'naam/namen teamlid Campus Gouda (vul het team in via ⚙ Opslag → Team en rollen)'} />
       </Field>
       <Field label="Samenvatting" full><textarea className={inputCls + ' h-28'} value={f.samenvatting} onChange={set('samenvatting')} /></Field>
       <Field label="Kans voor… (meerdere mogelijk)" full>
@@ -1672,7 +1688,7 @@ function InteractieForm({ initial, kansSoorten = KANS_STANDAARD, onSave, onCance
               <input type="checkbox" checked={!!a.done} onChange={() => setActie(a.id, 'done', !a.done)} className="accent-brand" />
               <input className="flex-1 min-w-[140px] border border-slate-300 rounded px-2 py-1" value={a.tekst} onChange={e=>setActie(a.id,'tekst',e.target.value)} placeholder="actie" />
               <input type="date" className="border border-slate-300 rounded px-2 py-1" value={a.deadline || ''} onChange={e=>setActie(a.id,'deadline',e.target.value)} title="deadline" />
-              <input className="w-28 border border-slate-300 rounded px-2 py-1" value={a.eigenaar || ''} onChange={e=>setActie(a.id,'eigenaar',e.target.value)} placeholder="eigenaar" />
+              <input className="w-32 border border-slate-300 rounded px-2 py-1" list="cg-team" value={a.eigenaar || ''} onChange={e=>setActie(a.id,'eigenaar',e.target.value)} placeholder="eigenaar" />
               <button onClick={() => delActie(a.id)} className="text-slate-400 hover:text-rose-600 px-1">&times;</button>
             </div>
           ))}
@@ -1716,6 +1732,7 @@ function ContactenTab({ contacten, setContacten, trajecten, uren = [], openConta
   const [fType, setFType] = useState('');
   const [fRegio, setFRegio] = useState('');
   const [fKans, setFKans] = useState('');
+  const [fGesprek, setFGesprek] = useState('');
   const kansSoorten = useMemo(() => kansSoortenUit(contacten), [contacten]);
   const regioVanContact = c => (c.vestiging && heeftAdres(c.vestiging) ? c.vestiging.regio : c.orgAdres && c.orgAdres.regio) || '';
   const [dragId, setDragId] = useState(null);       // contact dat gesleept wordt
@@ -1742,7 +1759,13 @@ function ContactenTab({ contacten, setContacten, trajecten, uren = [], openConta
     ...(c.trajectIds || []).map(id => trajById[id] && trajById[id].thema).filter(Boolean),
   ])];
 
-  const eigenaren = useMemo(() => [...new Set(contacten.map(c=>c.eigenaar).filter(Boolean))].sort(), [contacten]);
+  const eigenaren = useMemo(() => [...new Set([...TEAM_NAMEN, ...contacten.map(c=>c.eigenaar).filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'nl')), [contacten]);
+  // iedereen van Campus Gouda die bij een gesprek was (team + namen uit de gesprekken)
+  const gesprekVoerders = useMemo(() => {
+    const m = new Map();
+    [...TEAM_NAMEN, ...contacten.flatMap(c => (c.interacties || []).flatMap(i => naamLijst(i.aanwezig)))].forEach(n => { const k = n.toLowerCase(); if (!m.has(k)) m.set(k, n); });
+    return [...m.values()].sort((a, b) => a.localeCompare(b, 'nl'));
+  }, [contacten]);
 
   const filtered = useMemo(() => {
     const q = zoek.trim().toLowerCase();
@@ -1753,13 +1776,14 @@ function ContactenTab({ contacten, setContacten, trajecten, uren = [], openConta
       if (fType && (c.typeExtern || '') !== (fType === '(leeg)' ? '' : fType)) return false;
       if (fRegio && (fRegio === 'Midden-Holland' ? regioVanContact(c) !== 'Midden-Holland' : regioVanContact(c) === 'Midden-Holland')) return false;
       if (fKans && !(c.interacties || []).some(i => (i.kansen || []).includes(fKans))) return false;
+      if (fGesprek && !(c.interacties || []).some(i => heeftNaam(i.aanwezig, fGesprek))) return false;
       if (q) {
         const blob = [c.naam,c.organisatie,c.functie,c.email,c.telefoon,c.eigenaar,c.leadstatus,c.notities,c.typeExtern,adresTekst(c.orgAdres),c.orgAdres && c.orgAdres.gemeente].join(' ').toLowerCase();
         if (!blob.includes(q)) return false;
       }
       return true;
     });
-  }, [contacten, zoek, fStatus, fEigenaar, fThema, fType, fRegio, fKans, trajById]);
+  }, [contacten, zoek, fStatus, fEigenaar, fThema, fType, fRegio, fKans, fGesprek, trajById]);
 
   // statistieken (over alle contacten)
   const stats = useMemo(() => {
@@ -1887,7 +1911,10 @@ function ContactenTab({ contacten, setContacten, trajecten, uren = [], openConta
         <select value={fKans} onChange={e=>setFKans(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
           <option value="">Alle kansen</option>{kansSoorten.map(x=><option key={x} value={x}>Kans: {x}</option>)}
         </select>
-        <button onClick={() => { setZoek(''); setFStatus(''); setFEigenaar(''); setFThema(''); setFType(''); setFRegio(''); setFKans(''); }} className="text-sm text-slate-500 hover:text-slate-700 underline">Wissen</button>
+        <select value={fGesprek} onChange={e=>setFGesprek(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm" aria-label="Filter op gesprekken met teamlid">
+          <option value="">Alle gesprekken</option>{gesprekVoerders.map(x=><option key={x} value={x}>Gesprek met: {x}</option>)}
+        </select>
+        <button onClick={() => { setZoek(''); setFStatus(''); setFEigenaar(''); setFThema(''); setFType(''); setFRegio(''); setFKans(''); setFGesprek(''); }} className="text-sm text-slate-500 hover:text-slate-700 underline">Wissen</button>
         <span className="text-sm text-slate-400 ml-auto">{filtered.length} van {contacten.length}</span>
       </div>
 
@@ -2135,6 +2162,7 @@ function UrenTab({ uren, setUren, targets, setTargets, contacten, externalOrg, c
   }, [uren]);
   const collegas = useMemo(() => {
     const s = new Set();
+    TEAM_NAMEN.forEach(n => s.add(n));
     uren.forEach(r => { if (r.interneCollega) s.add(r.interneCollega); });
     contacten.forEach(c => { if (c.naam) s.add(c.naam); });
     return [...s].sort();
