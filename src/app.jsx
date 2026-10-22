@@ -4659,6 +4659,12 @@ function App() {
               return <span className="hidden md:inline text-xs text-slate-500" title={collegas.map(c => c.naam + ': laatst actief ' + new Date(c.actief).toLocaleString('nl-NL')).join('\n')}>
                 {actief.length ? 'Ook bezig: ' + actief.map(c => c.naam).join(', ') : `${collegas.length} collega${collegas.length === 1 ? '' : "'s"} in de map`}</span>;
             })()}
+            {APP_VERSIE && (
+              <a href="handleiding.html" target="_blank" rel="noopener"
+                className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-slate-50" title="Handleiding voor collega's: installeren, koppelen en gebruiken">
+                ❓ Handleiding
+              </a>
+            )}
             <button onClick={() => setFeedbackOpen(true)}
               className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-slate-50" title="Opmerking / feedback achterlaten">
               💬 Feedback

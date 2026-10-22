@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-src 'none'" />
+<meta name="referrer" content="no-referrer" />
+<title>Handleiding · Campus Gouda CRM</title>
+<!-- Gemaakt door scripts/maak_bron.mjs uit de handleiding voor collega's; niet met de hand aanpassen. -->
+<meta name="theme-color" content="#1A7754" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+<link rel="stylesheet" href="fonts/manrope.css" />
+<style>
+/* Layout: één leeskolom, drie genummerde opzetstappen (echte volgorde), daarna naslag: gebruik, problemen, privacy */
+:root {
+  --bg: #ffffff;
+  --vlak: #F2F8F6;
+  --rand: #D7E7E2;
+  --tekst: #1E2B36;
+  --zacht: #556673;
+  --kop: #0E3A5C;
+  --accent: #1A7754;
+  --accent-zacht: #CAE5E0;
+  --let-op-bg: #FFF6DC;
+  --let-op-rand: #EBCB6A;
+  --font: 'Manrope', Arial, system-ui, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0F1A20; --vlak: #15252C; --rand: #24404A; --tekst: #DCE6EA; --zacht: #9AB0BA;
+    --kop: #CFE6F5; --accent: #5DC398; --accent-zacht: #1D3D35; --let-op-bg: #2E2914; --let-op-rand: #6B5A1E;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0F1A20; --vlak: #15252C; --rand: #24404A; --tekst: #DCE6EA; --zacht: #9AB0BA;
+  --kop: #CFE6F5; --accent: #5DC398; --accent-zacht: #1D3D35; --let-op-bg: #2E2914; --let-op-rand: #6B5A1E;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--tekst); font-family: var(--font); font-size: 16px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+}
+main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+h1, h2, h3 { color: var(--kop); text-wrap: balance; margin: 0; line-height: 1.25; }
+h1 { font-size: clamp(28px, 5vw, 38px); font-weight: 800; letter-spacing: -0.01em; }
+h2 { font-size: 22px; font-weight: 700; }
+h3 { font-size: 17px; font-weight: 700; }
+p { margin: 0; }
+a { color: var(--accent); text-underline-offset: 3px; }
+code { font-family: var(--mono); font-size: 0.88em; background: var(--vlak); border: 1px solid var(--rand); border-radius: 4px; padding: 1px 5px; overflow-wrap: anywhere; }
+strong { font-weight: 700; }
+.label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.kopblok { display: flex; flex-direction: column; gap: 12px; }
+.intro { color: var(--zacht); font-size: 17px; max-width: 62ch; }
+.adres { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; background: var(--vlak); border: 1px solid var(--rand); border-radius: 10px; padding: 14px 16px; }
+.adres a { font-weight: 700; font-size: 17px; overflow-wrap: anywhere; min-width: 0; }
+button.kopie { font: inherit; font-size: 14px; font-weight: 600; color: var(--accent); background: transparent; border: 1px solid var(--accent); border-radius: 8px; padding: 5px 12px; cursor: pointer; margin-left: auto; }
+button.kopie:hover { background: var(--accent-zacht); }
+button.kopie:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nodig { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.nodig div { border-top: 3px solid var(--accent-zacht); padding-top: 10px; font-size: 15px; min-width: 0; }
+.nodig b { display: block; color: var(--kop); }
+section { display: flex; flex-direction: column; gap: 14px; }
+.eenmalig { font-size: 15px; color: var(--zacht); }
+.stap { display: grid; grid-template-columns: 44px 1fr; gap: 0 16px; }
+.stap .nr { width: 36px; height: 36px; border-radius: 50%; background: var(--accent); color: var(--bg); display: grid; place-items: center; font-weight: 800; font-size: 17px; font-variant-numeric: tabular-nums; }
+.stap .inhoud { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding-bottom: 8px; }
+.stap + .stap { border-top: 1px solid var(--rand); padding-top: 28px; }
+.waarom { color: var(--zacht); }
+ol, ul { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
+li::marker { color: var(--accent); font-weight: 700; }
+.os { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.os div { background: var(--vlak); border-radius: 8px; padding: 10px 14px; font-size: 15px; min-width: 0; }
+.os b { color: var(--kop); }
+.letop { background: var(--let-op-bg); border: 1px solid var(--let-op-rand); border-radius: 8px; padding: 10px 14px; font-size: 15px; }
+.klaar { background: var(--accent-zacht); border-radius: 10px; padding: 14px 18px; font-weight: 600; color: var(--kop); }
+.status { font-family: var(--mono); font-size: 0.9em; color: var(--accent); white-space: nowrap; }
+dl { margin: 0; display: grid; grid-template-columns: minmax(130px, 200px) 1fr; gap: 12px 20px; }
+dt { font-weight: 700; color: var(--kop); }
+dd { margin: 0; min-width: 0; }
+.tabel { overflow-x: auto; border: 1px solid var(--rand); border-radius: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; min-width: 520px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--rand); }
+th { background: var(--vlak); color: var(--kop); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 600; width: 40%; }
+.voet { color: var(--zacht); font-size: 14px; border-top: 1px solid var(--rand); padding-top: 16px; }
+@media (max-width: 520px) {
+  .stap { grid-template-columns: 1fr; gap: 10px; }
+  dl { grid-template-columns: 1fr; gap: 2px; }
+  dd { margin-bottom: 10px; }
+}
+
+.terug a { font-weight: 600; text-decoration: none; }
+.terug a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<main>
+  <nav class="terug"><a href="./">← Terug naar de app</a></nav>
+  <header class="kopblok">
+    <span class="label">Campus Gouda · voor projectleiders</span>
+    <h1>De CRM-app installeren en koppelen</h1>
+    <p class="intro">De CRM-app installeer je in je browser. Daarna open je hem via een eigen icoon. Alle collega's werken in dezelfde gegevens, en die blijven in de SharePoint-map van Campus Gouda. De app zelf bevat geen gegevens.</p>
+    <div class="adres">
+      <a id="app-adres" href="https://campusgouda-crm.github.io/CRM/" target="_blank" rel="noopener">campusgouda-crm.github.io/CRM</a>
+    </div>
+  </header>
+
+  <section aria-labelledby="nodig">
+    <h2 id="nodig">Wat je nodig hebt</h2>
+    <div class="nodig">
+      <div><b>Edge of Chrome</b>In Safari en Firefox werkt de app niet.</div>
+      <div><b>OneDrive en je gemeenteaccount</b>Hiermee zet je de CRM-map op je computer.</div>
+      <div><b>Toegang tot de CRM-map</b>Via het Teams-kanaal of de SharePoint-site van Campus Gouda.</div>
+    </div>
+  </section>
+
+  <section aria-labelledby="opzetten">
+    <h2 id="opzetten">Eenmalig opzetten</h2>
+    <p class="eenmalig">Deze drie stappen doe je één keer per computer. Reken op ongeveer 10 minuten.</p>
+
+    <div class="stap">
+      <div class="nr" aria-hidden="true">1</div>
+      <div class="inhoud">
+        <h3>De CRM-map naar je computer halen</h3>
+        <p class="waarom">De app kan alleen bij een map op je eigen computer, niet rechtstreeks bij Teams of SharePoint. Daarom zet je de map eerst via OneDrive op je computer. OneDrive houdt hem daarna vanzelf gelijk met SharePoint.</p>
+        <ol>
+          <li>Open in <strong>Teams</strong> het kanaal met de CRM-map en ga naar het tabblad <strong>Bestanden</strong>.</li>
+          <li>Klik op <strong>Openen in SharePoint</strong>. Die optie staat bovenaan of onder de <strong>…</strong>.</li>
+          <li>Ga in SharePoint naar de CRM-map, de map waarin <code>crm-data.json</code> staat.</li>
+          <li>Klik bovenaan op <strong>Synchroniseren</strong>. Staat die knop er niet, gebruik dan <strong>Snelkoppeling toevoegen aan Mijn bestanden</strong>.</li>
+          <li>Sta toe dat OneDrive opent. Log in met je <strong>gemeenteaccount</strong> als daarom wordt gevraagd.</li>
+          <li>Controleer of de map op je computer staat:</li>
+        </ol>
+        <div class="os">
+          <div><b>Windows</b>: in de Verkenner, links onder <strong>Gemeente Gouda</strong> of <strong>OneDrive – Gemeente Gouda</strong>.</div>
+          <div><b>Mac</b>: in de Finder, links onder <strong>Locaties → OneDrive – Gemeente Gouda</strong>.</div>
+        </div>
+        <ol start="7">
+          <li>Klik met de rechtermuisknop op de CRM-map en kies <strong>Altijd op dit apparaat bewaren</strong>. Zo staan de bestanden echt op je computer en niet alleen in de cloud. Zonder deze stap kan de app ze soms niet lezen.</li>
+        </ol>
+        <p class="letop">Krijg je een melding dat synchroniseren niet is toegestaan? Neem dan contact op met de beheerder van het CRM.</p>
+      </div>
+    </div>
+
+    <div class="stap">
+      <div class="nr" aria-hidden="true">2</div>
+      <div class="inhoud">
+        <h3>De app installeren</h3>
+        <ol>
+          <li>Open <a href="https://campusgouda-crm.github.io/CRM/" target="_blank" rel="noopener">campusgouda-crm.github.io/CRM</a> in <strong>Edge</strong> of <strong>Chrome</strong>.</li>
+          <li>Klik rechtsonder op <strong>Installeren</strong>. Zie je die melding niet, klik dan op het installeer-icoon rechts in de adresbalk: een schermpje met een pijl of een plusje.</li>
+          <li>De app opent in een eigen venster. Je vindt hem daarna in het Startmenu (Windows) of in Apps en het Dock (Mac).</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="stap">
+      <div class="nr" aria-hidden="true">3</div>
+      <div class="inhoud">
+        <h3>De CRM-map koppelen</h3>
+        <ol>
+          <li>Klik in de app rechtsboven op <strong>⚙ Opslag → Gedeelde map koppelen…</strong>.</li>
+          <li>Er opent een venster met je bestanden. Dat klopt. Klik links op <strong>Gemeente Gouda</strong> of <strong>OneDrive – Gemeente Gouda</strong> en ga naar de CRM-map.</li>
+          <li>Selecteer <strong>de map zelf</strong>, niet een bestand erin, en klik op <strong>Map selecteren</strong> of <strong>Openen</strong>.</li>
+          <li>De browser vraagt of de app de map mag bekijken en wijzigen. Klik op <strong>Toestaan</strong> of <strong>Wijzigingen opslaan</strong>, en kies <strong>Altijd toestaan</strong> als die keuze er staat.</li>
+          <li>Vul je naam in als de app daarom vraagt. Collega's zien dan wie wat heeft gedaan.</li>
+          <li>Controleer bovenin: daar staat nu <span class="status">● Gedeeld · tijd</span>. Werkt er een collega tegelijk, dan zie je ook <strong>Ook bezig: …</strong>.</li>
+        </ol>
+      </div>
+    </div>
+
+    <p class="waarom">Feedback via <strong>💬 Feedback</strong> komt vanzelf in <code>crm-feedback.json</code> in dezelfde CRM-map. Dat hoef je niet apart te koppelen.</p>
+
+    <p class="klaar">Klaar. Vanaf nu open je de app via het icoon en staan je gegevens er meteen. Je hoeft de map niet meer zelf te openen.</p>
+  </section>
+
+  <section aria-labelledby="gebruik">
+    <h2 id="gebruik">Dagelijks gebruik</h2>
+    <dl>
+      <dt>Samenwerken</dt>
+      <dd>Wijzigingen van collega's verschijnen binnen ongeveer 30 seconden vanzelf. Iedereen schrijft in een eigen bestand in <code>crm-wijzigingen/</code>, zodat niemand elkaars werk overschrijft.</dd>
+      <dt>Aantekeningen</dt>
+      <dd>Op de pagina van een studentengroep staat het blok <strong>Aantekeningen</strong>. Kies <strong>+ Kick-off</strong>, <strong>+ Voortgangsgesprek</strong>, <strong>+ Tussenpresentatie</strong>, <strong>+ Eindpresentatie</strong> of <strong>+ Overig</strong>. Geef aan of het over de hele groep gaat of over een of meer studenten, en schrijf je aantekening. Collega's zien hem ook. Een jaar na afloop van de groep worden aantekeningen met de AVG-opschoning weer weggehaald.</dd>
+      <dt>Team en rollen</dt>
+      <dd>Via <strong>⚙ Opslag → 👥 Team en rollen…</strong> staat wie er in het team zit en in welke rol. Die namen verschijnen in de keuzelijsten, zoals senior, junior, contact Campus Gouda en "jouw naam". Pas het team alleen aan als er iemand bij komt of weggaat.</dd>
+      <dt>Mail groep</dt>
+      <dd>Opent een concept in Outlook met de mailadressen van de studenten. Opent er een ander mailprogramma? Zet dan in het menu van <strong>Mail groep</strong> de keuze bij <strong>Openen in</strong> op <strong>Outlook</strong>. Je kunt ook <strong>📋 Kopieer mailadressen</strong> gebruiken en de adressen in Outlook plakken.</dd>
+      <dt>Nieuwe versie</dt>
+      <dd>Verschijnt rechtsonder <strong>Er is een nieuwe versie van het CRM</strong>, klik dan op <strong>Herladen</strong>.</dd>
+      <dt>Zonder internet</dt>
+      <dd>De app werkt ook offline. Wat je dan wijzigt, komt bij je collega's zodra OneDrive weer verbinding heeft. Alleen adressen opzoeken lukt niet zonder internet.</dd>
+    </dl>
+  </section>
+
+  <section aria-labelledby="problemen">
+    <h2 id="problemen">Als er iets niet goed gaat</h2>
+    <div class="tabel">
+      <table>
+        <thead><tr><th scope="col">Wat je ziet</th><th scope="col">Wat je doet</th></tr></thead>
+        <tbody>
+          <tr><td>De app vraagt opnieuw om toestemming, of je ziet <strong>Toegang heractiveren</strong></td><td>Klik erop en kies <strong>Toestaan</strong>. Dat gebeurt soms na een update van de browser.</td></tr>
+          <tr><td>Nog niet gekoppeld aan de gedeelde map</td><td>Doe stap 3 opnieuw.</td></tr>
+          <tr><td>Wijzigingen van een collega komen niet binnen</td><td>Controleer of OneDrive draait: het wolkje in de taakbalk of menubalk moet een groen vinkje hebben. Wacht daarna een minuut.</td></tr>
+          <tr><td>De CRM-map staat niet in het koppelvenster</td><td>Doe stap 1 opnieuw en controleer of de map in de Verkenner of Finder staat.</td></tr>
+          <tr><td>De app opent niet in Safari of Firefox</td><td>Gebruik Edge of Chrome.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Werkt het daarna nog niet, schrijf dan op wat je deed, wat je zag en hoe laat, en geef dat door aan de beheerder van het CRM.</p>
+  </section>
+
+  <section aria-labelledby="privacy">
+    <h2 id="privacy">Privacy</h2>
+    <ul>
+      <li>De gegevens staan alleen in de SharePoint-map en in je eigen browser. Ze gaan nooit naar de website van de app.</li>
+      <li>Stuur bestanden uit de CRM-map (<code>crm-data.json</code> en <code>crm-wijzigingen/</code>) niet door: er staan gegevens van studenten en contactpersonen in.</li>
+      <li>Maak je een schermafbeelding om een probleem te laten zien, zorg dan dat er geen namen van studenten op staan.</li>
+      <li>Werk je op een gedeelde computer, gebruik de app daar dan niet, of verwijder hem daarna. Je browser bewaart een kopie van de gegevens voor offline gebruik.</li>
+    </ul>
+  </section>
+
+  <p class="voet">Campus Gouda CRM-app · handleiding voor collega's</p>
+</main>
+</body>
+</html>

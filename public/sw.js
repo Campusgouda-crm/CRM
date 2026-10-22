@@ -40,7 +40,8 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // PDOK e.d.: niet aankomen
   url.search = ''; url.hash = '';
-  const sleutel = req.mode === 'navigate' && url.href.startsWith(BASIS) ? BASIS + 'index.html' : url.href;
+  // een pagina uit de lijst (zoals handleiding.html) gewoon tonen; elke andere pagina binnen de app → de app zelf
+  const sleutel = req.mode === 'navigate' && url.href.startsWith(BASIS) && !IN_LIJST.has(url.href) ? BASIS + 'index.html' : url.href;
   if (!IN_LIJST.has(sleutel) && sleutel !== BASIS + 'index.html') return;
   e.respondWith((async () => {
     const c = await caches.open(CACHE);

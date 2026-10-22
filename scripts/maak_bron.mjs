@@ -140,5 +140,48 @@ fs.writeFileSync(path.join(SRC, 'sync.js'), kop('samenwerken in de gedeelde map'
 fs.writeFileSync(path.join(SRC, 'app.jsx'), kop('de app') + app.trim() + '\n');
 fs.writeFileSync(path.join(SRC, 'basis.css'), kop('basisstijl') + stijl.trim().replace(/^ {4}/gm, '') + '\n');
 
+// ---------- 6. handleiding voor collega's → public/handleiding.html (te openen vanuit de app) ----------
+const HANDLEIDING = path.resolve(PWA, "../Handleiding CRM-app voor collega's.html");
+if (fs.existsSync(HANDLEIDING)) {
+  const h = fs.readFileSync(HANDLEIDING, 'utf8');
+  const stijlH = (h.match(/<style>([\s\S]*?)<\/style>/) || [])[1];
+  let main = (h.match(/<main>[\s\S]*?<\/main>/) || [])[0];
+  if (!stijlH || !main) throw new Error('handleiding: <style> of <main> niet gevonden');
+  main = main
+    .replace(/\s*<button class="kopie"[^>]*>[^<]*<\/button>/, '')
+    // in de openbare app geen namen: de beheerder in plaats van een persoon
+    .replace(/Neem dan contact op met [A-Z][a-z]+\./g, 'Neem dan contact op met de beheerder van het CRM.')
+    .replace(/geef dat door aan [A-Z][a-z]+\./g, 'geef dat door aan de beheerder van het CRM.')
+    .replace('<main>', '<main>\n  <nav class="terug"><a href="./">← Terug naar de app</a></nav>');
+  const pagina = `<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-src 'none'" />
+<meta name="referrer" content="no-referrer" />
+<title>Handleiding · Campus Gouda CRM</title>
+<!-- Gemaakt door scripts/maak_bron.mjs uit de handleiding voor collega's; niet met de hand aanpassen. -->
+<meta name="theme-color" content="#1A7754" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+<link rel="stylesheet" href="fonts/manrope.css" />
+<style>${stijlH}
+.terug a { font-weight: 600; text-decoration: none; }
+.terug a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+${main}
+</body>
+</html>
+`;
+  fs.mkdirSync(path.join(PWA, 'public'), { recursive: true });
+  fs.writeFileSync(path.join(PWA, 'public', 'handleiding.html'), pagina);
+  console.log('Handleiding gemaakt: public/handleiding.html');
+} else {
+  console.log('Let op: handleiding niet gevonden, public/handleiding.html niet bijgewerkt.');
+}
+
 console.log('Bron gemaakt in src/: theme.js, tailwind.thema.cjs, logic.js, sync.js, app.jsx, basis.css');
 console.log('Draai nu de privacycontrole: node scripts/privacycontrole.mjs src');
