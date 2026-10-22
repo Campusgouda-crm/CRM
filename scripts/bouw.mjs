@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import babel from '@babel/core';
+import { maakDonker } from './donker.mjs';
 
 const require = createRequire(import.meta.url);
 const PWA = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -48,7 +49,8 @@ fs.writeFileSync(invoer, '@tailwind base;\n@tailwind components;\n@tailwind util
 try {
   execFileSync(process.execPath, [path.join(NM, 'tailwindcss/lib/cli.js'), '-c', path.join(PWA, 'tailwind.config.cjs'), '-i', invoer, '-o', path.join(DIST, 'app.css'), '--minify'], { cwd: PWA, stdio: ['ignore', 'ignore', 'pipe'] });
 } finally { fs.rmSync(invoer, { force: true }); }
-console.log('✓ CSS gemaakt');
+schrijf('donker.css', maakDonker(lees(path.join(DIST, 'app.css'))));
+console.log('✓ CSS gemaakt (licht en donker)');
 
 // 3. bibliotheken + lettertype
 kopieer(path.join(NM, 'react/umd/react.production.min.js'), 'vendor/react.production.min.js');

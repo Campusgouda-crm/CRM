@@ -4773,6 +4773,9 @@ function App() {
   vulTeamNamen(team);
   vulTeamLijsten(trajecten, team);
   const [teamOpen, setTeamOpen] = useState(false);
+  // weergave (licht/donker/systeem): alleen in de app-versie, per computer
+  const [weergave, setWeergave] = useState(() => (window.CG_WEERGAVE ? window.CG_WEERGAVE.keuze() : 'licht'));
+  const zetWeergave = (w) => { if (window.CG_WEERGAVE) window.CG_WEERGAVE.zet(w); setWeergave(w); };
   const [feedback, setFeedback] = useState(() => loadLS(LS_FEEDBACK, []) || []);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackStatus, setFeedbackStatus] = useState(FSA_SUPPORTED ? 'niet-gekoppeld' : 'unsupported'); // niet-gekoppeld | verbonden | prompt | unsupported
@@ -5305,6 +5308,16 @@ function App() {
                   <div className="border-t border-slate-100 my-2"></div>
                   <div className="text-xs font-semibold text-ink mb-1">Team</div>
                   <button onClick={() => { setMenuOpen(false); setTeamOpen(true); }} className="w-full mb-1 px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-50">👥 Team en rollen… {team.length ? `(${team.length})` : ''}</button>
+                  {APP_VERSIE && window.CG_WEERGAVE && (<>
+                    <div className="border-t border-slate-100 my-2"></div>
+                    <div className="text-xs font-semibold text-ink mb-1">Weergave</div>
+                    <div className="flex gap-1 mb-1">
+                      {[['licht', '☀️ Licht'], ['donker', '🌙 Donker'], ['systeem', '💻 Als computer']].map(([w, label]) => (
+                        <button key={w} type="button" onClick={() => zetWeergave(w)} aria-pressed={weergave === w}
+                          className={'flex-1 px-2 py-1.5 rounded-lg border text-xs ' + (weergave === w ? 'bg-brand text-white border-brand' : 'border-slate-300 text-slate-600 hover:bg-slate-50')}>{label}</button>
+                      ))}
+                    </div>
+                  </>)}
                   <div className="border-t border-slate-100 my-2"></div>
                   <div className="text-xs font-semibold text-ink mb-1">Handmatige back-up</div>
                   <p className="text-xs text-slate-400 mb-2">Een losse momentopname — <strong>niet</strong> de live opslag. Wijzigingen hierna worden niet automatisch in dit bestand bijgewerkt.</p>

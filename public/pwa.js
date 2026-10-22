@@ -76,6 +76,7 @@
     ]);
   }
   window.addEventListener('load', async () => {
+    if (window.CG_WEERGAVE) window.CG_WEERGAVE.pasToe(); // grafieken (Chart.js) in de goede kleuren
     try {
       const reg = await navigator.serviceWorker.register('sw.js', { scope: './' });
       if (reg.waiting && navigator.serviceWorker.controller) toonUpdate(reg.waiting);
