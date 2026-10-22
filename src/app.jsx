@@ -4896,6 +4896,348 @@ function FeedbackBody({ feedback, status, onAdd, onDelete, onExport, onKoppel, o
 }
 
 /* ============================================================
+   CIJFERS: overzicht met tegels, verdelingen en eigen tabellen
+   ============================================================ */
+// schooljaar loopt van augustus t/m juli; semester 1 = aug t/m jan, semester 2 = feb t/m jul
+function semesterVan(iso) {
+  if (!iso || !/^\d{4}-\d{2}/.test(iso)) return null;
+  const y = +iso.slice(0, 4), m = +iso.slice(5, 7);
+  return m >= 8 ? { j: y, s: 1 } : m === 1 ? { j: y - 1, s: 1 } : { j: y - 1, s: 2 };
+}
+const semSleutel = x => x ? x.j + '-' + x.s : '';
+const semLabel = k => { if (!k) return '(onbekend)'; const [j, s] = k.split('-').map(Number); return 'sem ' + s + ' ' + String(j).slice(2) + '/' + String(j + 1).slice(2); };
+const semVolgende = x => x.s === 1 ? { j: x.j, s: 2 } : { j: x.j + 1, s: 1 };
+const jaarLabel = j => j + '/' + (j + 1);
+function inPeriode(iso, periode) {
+  if (!periode || !periode.j) return true;
+  const x = semesterVan(iso);
+  return !!x && x.j === periode.j && (!periode.s || x.s === periode.s);
+}
+function semestersVanTraject(t) {
+  return (t.semesters || []).map(n => { const m = String(n).match(/Semester\s*(\d)\s*(\d{4})/i); return m ? { j: +m[2], s: +m[1] } : null; }).filter(Boolean);
+}
+const CIJFER_UURTARIEF = 100;
+const ONBEKEND = '(onbekend)';
+
+function berekenCijfers({ trajecten = [], contacten = [], groepen = [], uren = [] }, periode) {
+  const vandaag = CGT.vandaagISO();
+  const orgNaam = new Map();
+  const org = n => { const k = normaliseerOrg(n); if (!k || k === 'campusgouda') return ''; if (!orgNaam.has(k)) orgNaam.set(k, String(n).trim()); return k; };
+  const orgInfo = new Map();
+  const info = k => { if (!orgInfo.has(k)) orgInfo.set(k, { k, naam: orgNaam.get(k), themas: new Set(), type: '', regio: '', actief: new Set() }); return orgInfo.get(k); };
+  contacten.forEach(c => { const k = org(c.organisatie); if (!k) return; const o = info(k); (c.themas || []).forEach(t => o.themas.add(t)); if (c.typeExtern && !o.type) o.type = c.typeExtern; const r = (c.orgAdres && c.orgAdres.regio) || ''; if (r && !o.regio) o.regio = r; });
+  uren.forEach(r => { const k = org(r.organisatie); if (!k) return; const o = info(k); if (r.type && !o.type) o.type = r.type; if (!o.regio && r.gemeente) o.regio = regioVan(r.gemeente) || ''; });
+
+  const trajById = new Map(trajecten.map(t => [t.id, t]));
+  const contactById = new Map(contacten.map(c => [c.id, c]));
+  const opdrachtgever = g => { const t = trajById.get(g.trajectId); const c = t && contactById.get(t.contactBedrijfId); return c ? org(c.organisatie) : ''; };
+  const plan = groepen.map(g => { const p = CGT.planning(g, vandaag); return { g, p, start: p.start || p.kickoff || '', og: opdrachtgever(g) }; });
+  const groepenP = plan.filter(x => inPeriode(x.start, periode));
+
+  // actief = gesprek of uren in de periode, of opdrachtgever van een groep/traject in de periode
+  const gesprekken = [];
+  contacten.forEach(c => (c.interacties || []).forEach(i => {
+    if (!inPeriode(i.datum, periode)) return;
+    gesprekken.push({ c, i });
+    const k = org(c.organisatie); if (k) info(k).actief.add('gesprek');
+  }));
+  const urenP = uren.filter(r => !isDubbel(r) && inPeriode(r.datum, periode));
+  urenP.forEach(r => { const k = org(r.organisatie); if (k && urenTotaal(r) > 0) { const o = info(k); o.actief.add('uren'); if (r.thema) o.themas.add(r.thema); } });
+  groepenP.forEach(x => { if (x.og) { const o = info(x.og); o.actief.add('groep'); if (x.g.thema) o.themas.add(x.g.thema); } });
+  const trajectenP = trajecten.filter(t => !periode.j || semestersVanTraject(t).some(x => x.j === periode.j && (!periode.s || x.s === periode.s)));
+  trajectenP.forEach(t => { const c = contactById.get(t.contactBedrijfId); const k = c && org(c.organisatie); if (k) { const o = info(k); o.actief.add('traject'); if (t.thema) o.themas.add(t.thema); } });
+
+  const partners = [...orgNaam.keys()].map(info).sort((a, b) => String(a.naam).localeCompare(String(b.naam), 'nl'));
+  const actief = partners.filter(o => o.actief.size);
+  const huidig = semesterVan(vandaag), komend = semVolgende(huidig);
+  const komendeGroepen = plan.filter(x => semSleutel(semesterVan(x.start)) === semSleutel(komend));
+  const telStud = lijst => lijst.reduce((n, x) => n + (x.g.studenten || []).length, 0);
+
+  // feitenlijsten voor tabellen (één regel per telbaar ding)
+  const feiten = {
+    studenten: groepenP.map(x => ({ thema: x.g.thema, semester: semSleutel(semesterVan(x.start)), instelling: x.g.onderwijsinstelling, type: x.og ? info(x.og).type : '', regio: x.og ? info(x.og).regio : '', projectleider: x.g.contactCG, waarde: (x.g.studenten || []).length })),
+    groepen: groepenP.map(x => ({ thema: x.g.thema, semester: semSleutel(semesterVan(x.start)), instelling: x.g.onderwijsinstelling, type: x.og ? info(x.og).type : '', regio: x.og ? info(x.og).regio : '', projectleider: x.g.contactCG, waarde: 1 })),
+    partners: actief.flatMap(o => (o.themas.size ? [...o.themas] : ['']).map(th => ({ thema: th, semester: '', instelling: '', type: o.type, regio: o.regio, projectleider: '', waarde: 1 }))),
+    uren: urenP.map(r => ({ thema: r.thema, semester: semSleutel(semesterVan(r.datum)), instelling: '', type: r.type, regio: regioVan(r.gemeente) || (r.gemeente ? 'Buiten Midden-Holland' : ''), projectleider: naamLijst(r.interneCollega)[0] || '', waarde: urenTotaal(r) })),
+    gesprekken: gesprekken.map(({ c, i }) => ({ thema: (c.themas || [])[0] || '', semester: semSleutel(semesterVan(i.datum)), instelling: '', type: c.typeExtern, regio: (c.orgAdres && c.orgAdres.regio) || '', projectleider: naamLijst(i.aanwezig)[0] || '', waarde: 1 })),
+    trajecten: trajectenP.flatMap(t => { const sem = semestersVanTraject(t).filter(x => !periode.j || (x.j === periode.j && (!periode.s || x.s === periode.s))); return (sem.length ? sem : [null]).map(x => ({ thema: t.thema, semester: semSleutel(x), instelling: '', type: '', regio: '', projectleider: t.senior || t.junior || '', waarde: 1 })); }),
+  };
+
+  const kansen = {};
+  gesprekken.forEach(({ i }) => (i.kansen || []).forEach(k => { kansen[k] = (kansen[k] || 0) + 1; }));
+  const urenTot = urenP.reduce((n, r) => n + urenTotaal(r), 0);
+  const perCat = UREN_CATS.map(c => ({ label: c.label, waarde: urenP.reduce((n, r) => n + (parseFloat(r[c.key]) || 0), 0) }));
+  const tevreden = plan.filter(x => x.g.evaluatie && x.g.evaluatie.tevredenheid && inPeriode(x.p.eindDatum, periode)).map(x => ({ x, t: Number(x.g.evaluatie.tevredenheid) }));
+  const perSem = new Map(); plan.forEach(x => { const k = semSleutel(semesterVan(x.start)); if (k) perSem.set(k, (perSem.get(k) || 0) + (x.g.studenten || []).length); });
+  const semReeks = [...perSem.keys()].sort().slice(-5);
+  if (!semReeks.includes(semSleutel(komend))) semReeks.push(semSleutel(komend));
+
+  return {
+    partners, actief, groepenP, trajectenP, urenP, gesprekken, kansen, perCat, tevreden, feiten,
+    studenten: telStud(groepenP), komend, komendeGroepen, komendStudenten: telStud(komendeGroepen),
+    lopend: groepenP.filter(x => x.start && x.start <= vandaag && !(x.p.eindDatum && x.p.eindDatum < vandaag)),
+    afgerond: groepenP.filter(x => x.p.eindDatum && x.p.eindDatum < vandaag),
+    gepland: groepenP.filter(x => x.start && x.start > vandaag),
+    zonderStart: groepenP.filter(x => !x.start),
+    urenTot, bijdrage: urenTot * CIJFER_UURTARIEF,
+    perSem: semReeks.map(k => ({ k, label: semLabel(k), waarde: perSem.get(k) || 0, komend: k === semSleutel(komend) })),
+    mhActief: actief.filter(o => o.regio === 'Midden-Holland').length,
+  };
+}
+
+const CIJFER_WAT = [['studenten', 'Studenten'], ['groepen', 'Studentengroepen'], ['partners', 'Actieve partners'], ['uren', 'Uren partners'], ['gesprekken', 'Gesprekken'], ['trajecten', 'Trajecten']];
+const CIJFER_PER = [['thema', 'Thema'], ['semester', 'Semester'], ['instelling', 'Onderwijsinstelling'], ['type', 'Type partner'], ['regio', 'Regio'], ['projectleider', 'Projectleider / collega']];
+const CIJFER_BLOKKEN = [
+  ['tegels', 'Kerncijfers'], ['partnersThema', 'Actieve partners per thema'], ['studentenSemester', 'Studenten per semester'],
+  ['groepenStatus', 'Studentengroepen'], ['trajecten', 'Trajecten'], ['uren', 'Uren en bijdrage partners'], ['gesprekken', 'Gesprekken en kansen'],
+  ['instellingen', 'Per onderwijsinstelling'], ['tevredenheid', 'Tevredenheid en regio'], ['eigen', 'Eigen tabellen'],
+];
+const LS_CIJFER_PERIODE = 'cgt_cijfers_periode', LS_CIJFER_BLOKKEN = 'cgt_cijfers_blokken', LS_CIJFER_TABELLEN = 'cgt_cijfers_tabellen';
+const getal = n => (Math.round(n * 10) / 10).toLocaleString('nl-NL');
+function groepeer(rijen, per) {
+  const m = new Map();
+  rijen.forEach(r => { let k = r[per] || ''; if (per === 'semester') k = k ? semLabel(k) : ''; k = k || ONBEKEND; m.set(k, (m.get(k) || 0) + (Number(r.waarde) || 0)); });
+  return [...m.entries()].map(([label, waarde]) => ({ label, waarde })).sort((a, b) => per === 'semester' ? a.label.localeCompare(b.label) : b.waarde - a.waarde);
+}
+const THEMA_BALK = { 'Zorg': 'bg-themazorg', 'Bodem': 'bg-themabodem', 'Logistiek': 'bg-themalogistiek' };
+function Balken({ rijen, kleur, eenheid = '' }) {
+  const max = Math.max(1, ...rijen.map(r => r.waarde));
+  if (!rijen.length) return <p className="text-sm text-slate-400">Geen gegevens in deze periode.</p>;
+  return (
+    <div className="space-y-1.5">
+      {rijen.map(r => (
+        <div key={r.label} className="flex items-center gap-2 text-sm">
+          <span className="w-36 shrink-0 truncate text-slate-600" title={r.label}>{r.label}</span>
+          <div className="flex-1 min-w-0 h-3 rounded bg-slate-100 overflow-hidden"><div className={'h-3 rounded ' + ((kleur && kleur(r)) || 'bg-brand')} style={{ width: Math.max(2, r.waarde / max * 100) + '%' }} /></div>
+          <span className="w-16 text-right tabular-nums text-ink font-medium">{getal(r.waarde)}{eenheid}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+function kopieerTabel(titel, kolommen, rijen) {
+  const tekst = [titel, kolommen.join('\t'), ...rijen.map(r => r.join('\t'))].join('\n');
+  try { navigator.clipboard.writeText(tekst); } catch (e) { window.prompt('Kopieer de tabel:', tekst); }
+}
+
+function CijfersOverzicht({ trajecten, contacten, groepen, uren }) {
+  const vandaag = CGT.vandaagISO();
+  const huidig = semesterVan(vandaag);
+  const [periode, setPeriode] = useState(() => loadLS(LS_CIJFER_PERIODE, { j: huidig.j, s: 0 }) || { j: huidig.j, s: 0 });
+  const zetPeriode = p => { setPeriode(p); saveLS(LS_CIJFER_PERIODE, p); };
+  const [blokken, setBlokken] = useState(() => {
+    const opgeslagen = loadLS(LS_CIJFER_BLOKKEN, null) || [];
+    const bekend = new Set(opgeslagen.map(b => b.id));
+    return [...opgeslagen.filter(b => CIJFER_BLOKKEN.some(([id]) => id === b.id)), ...CIJFER_BLOKKEN.filter(([id]) => !bekend.has(id)).map(([id]) => ({ id, aan: true }))];
+  });
+  const zetBlokken = b => { setBlokken(b); saveLS(LS_CIJFER_BLOKKEN, b); };
+  const [tabellen, setTabellen] = useState(() => loadLS(LS_CIJFER_TABELLEN, null) || [{ id: 't1', wat: 'studenten', per: 'thema' }, { id: 't2', wat: 'uren', per: 'type' }]);
+  const zetTabellen = t => { setTabellen(t); saveLS(LS_CIJFER_TABELLEN, t); };
+  const [aanpassen, setAanpassen] = useState(false);
+  const [lijst, setLijst] = useState(null); // { titel, regels }
+  const [gekopieerd, setGekopieerd] = useState('');
+
+  const c = useMemo(() => berekenCijfers({ trajecten, contacten, groepen, uren }, periode), [trajecten, contacten, groepen, uren, periode]);
+  const jaren = useMemo(() => {
+    const s = new Set([huidig.j, semVolgende(huidig).j]);
+    groepen.forEach(g => { const x = semesterVan(CGT.planning(g, vandaag).start); if (x) s.add(x.j); });
+    uren.forEach(r => { const x = semesterVan(r.datum); if (x) s.add(x.j); });
+    contacten.forEach(k => (k.interacties || []).forEach(i => { const x = semesterVan(i.datum); if (x) s.add(x.j); }));
+    return [...s].sort((a, b) => b - a);
+  }, [groepen, uren, contacten]);
+  const periodeTekst = !periode.j ? 'alle jaren' : 'schooljaar ' + jaarLabel(periode.j) + (periode.s ? ', semester ' + periode.s : '');
+  const toon = (titel, regels) => setLijst({ titel, regels: regels.length ? regels : ['Niets in deze periode.'] });
+  const groepRegel = x => (x.g.groepsnummer || '') + ' ' + (x.g.titel || '') + ' · ' + (x.g.studenten || []).length + ' studenten' + (x.start ? ' · start ' + CGT.datumDM(x.start) : '');
+  const kopieerMelding = t => { setGekopieerd(t); setTimeout(() => setGekopieerd(''), 2000); };
+
+  const Tegel = ({ label, waarde, sub, onClick }) => (
+    <button type="button" onClick={onClick} className="text-left bg-white rounded-xl border border-slate-200 p-3 hover:border-brand hover:bg-brandlight/20 transition-colors">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="text-2xl font-semibold text-ink tabular-nums">{waarde}</div>
+      {sub && <div className="text-[11px] text-slate-500 mt-0.5">{sub}</div>}
+    </button>
+  );
+  const Kaart = ({ titel, children, rechts }) => (
+    <div className="bg-white rounded-xl border border-slate-200 p-4 min-w-0">
+      <div className="flex items-center justify-between gap-2 mb-3"><h3 className="font-semibold text-ink text-sm">{titel}</h3>{rechts}</div>
+      {children}
+    </div>
+  );
+  const themaKleur = r => THEMA_BALK[r.label] || 'bg-midgroen';
+  const perThema = groepeer(c.feiten.partners, 'thema');
+
+  const inhoud = {
+    tegels: (
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+        <Tegel label="Partners" waarde={c.partners.length} sub="organisaties in het CRM" onClick={() => toon('Alle partners (' + c.partners.length + ')', c.partners.map(o => o.naam + (o.type ? ' · ' + o.type : '')))} />
+        <Tegel label="Actieve partners" waarde={c.actief.length} sub={periodeTekst} onClick={() => toon('Actieve partners, ' + periodeTekst, c.actief.map(o => o.naam + ' · ' + [...o.actief].join(', ')))} />
+        <Tegel label="Studenten" waarde={c.studenten} sub={periodeTekst} onClick={() => toon('Studenten per groep, ' + periodeTekst, c.groepenP.map(groepRegel))} />
+        <Tegel label="Komend semester" waarde={c.komendStudenten} sub={semLabel(semSleutel(c.komend)) + ' · ' + c.komendeGroepen.length + ' groepen'} onClick={() => toon('Komend semester (' + semLabel(semSleutel(c.komend)) + ')', c.komendeGroepen.map(groepRegel))} />
+        <Tegel label="Studentengroepen" waarde={c.groepenP.length} sub={c.lopend.length + ' lopend · ' + c.afgerond.length + ' afgerond · ' + c.gepland.length + ' gepland'} onClick={() => toon('Studentengroepen, ' + periodeTekst, c.groepenP.map(groepRegel))} />
+        <Tegel label="Trajecten" waarde={c.trajectenP.length} sub={c.trajectenP.filter(t => t.status === 'Actief').length + ' actief'} onClick={() => toon('Trajecten, ' + periodeTekst, c.trajectenP.map(t => (t.titel || '—') + ' · ' + (t.thema || '') + ' · ' + (t.status || '')))} />
+        <Tegel label="Uren partners" waarde={getal(c.urenTot)} sub={'≈ € ' + Math.round(c.bijdrage).toLocaleString('nl-NL') + ' bijdrage'} onClick={() => toon('Urenregels, ' + periodeTekst, c.urenP.map(r => (r.datum || '') + ' · ' + (r.organisatie || '') + ' · ' + getal(urenTotaal(r)) + ' uur' + (r.bron === 'gesprek' ? ' (uit gesprek)' : '')))} />
+        <Tegel label="Gesprekken" waarde={c.gesprekken.length} sub={periodeTekst} onClick={() => toon('Gesprekken, ' + periodeTekst, c.gesprekken.map(({ c: k, i }) => (i.datum || '') + ' · ' + (k.naam || '') + ' (' + (k.organisatie || '') + ')'))} />
+        <Tegel label="Tevredenheid" waarde={c.tevreden.length ? getal(c.tevreden.reduce((n, x) => n + x.t, 0) / c.tevreden.length) + ' / 5' : '—'} sub={c.tevreden.length + ' evaluaties'} onClick={() => toon('Evaluaties opdrachtgevers', c.tevreden.map(({ x, t }) => (x.g.groepsnummer || '') + ' ' + (x.g.titel || '') + ' · ' + t + '/5'))} />
+        <Tegel label="Uit Midden-Holland" waarde={c.mhActief} sub={'van ' + c.actief.length + ' actieve partners'} onClick={() => toon('Actieve partners uit Midden-Holland', c.actief.filter(o => o.regio === 'Midden-Holland').map(o => o.naam))} />
+      </div>
+    ),
+    partnersThema: <Kaart titel="Actieve partners per thema"><Balken rijen={perThema} kleur={themaKleur} /><p className="text-[11px] text-slate-400 mt-2">Een partner die in meer thema's actief is, telt in elk thema mee.</p></Kaart>,
+    studentenSemester: (
+      <Kaart titel="Studenten per semester">
+        <div className="flex items-end gap-2 h-32">
+          {c.perSem.map(x => { const max = Math.max(1, ...c.perSem.map(y => y.waarde)); return (
+            <div key={x.k} className="flex-1 min-w-0 flex flex-col items-center gap-1">
+              <span className="text-xs tabular-nums text-ink font-medium">{x.waarde}</span>
+              <div className={'w-full rounded-t ' + (x.komend ? 'bg-brandlight border border-dashed border-brand' : 'bg-brand')} style={{ height: Math.max(4, x.waarde / max * 88) + 'px' }} />
+              <span className={'text-[11px] truncate ' + (x.komend ? 'text-branddark font-semibold' : 'text-slate-500')}>{x.komend ? 'komend' : x.label}</span>
+            </div>); })}
+        </div>
+      </Kaart>
+    ),
+    groepenStatus: (
+      <Kaart titel="Studentengroepen">
+        <Balken rijen={[{ label: 'Lopend', waarde: c.lopend.length }, { label: 'Gepland', waarde: c.gepland.length }, { label: 'Afgerond', waarde: c.afgerond.length }, ...(c.zonderStart.length ? [{ label: 'Zonder startdatum', waarde: c.zonderStart.length }] : [])]} />
+        <div className="mt-3"><Balken rijen={groepeer(c.feiten.groepen, 'thema')} kleur={themaKleur} /></div>
+      </Kaart>
+    ),
+    trajecten: (
+      <Kaart titel="Trajecten">
+        <Balken rijen={STATUSSEN.map(st => ({ label: st, waarde: c.trajectenP.filter(t => (t.status || 'Idee') === st).length })).filter(r => r.waarde)} />
+        <div className="mt-3"><Balken rijen={groepeer(c.feiten.trajecten, 'thema')} kleur={themaKleur} /></div>
+      </Kaart>
+    ),
+    uren: (
+      <Kaart titel="Uren en bijdrage partners" rechts={<span className="text-xs text-slate-500">{getal(c.urenTot)} uur · ≈ € {Math.round(c.bijdrage).toLocaleString('nl-NL')}</span>}>
+        <Balken rijen={c.perCat.filter(r => r.waarde)} eenheid=" u" />
+      </Kaart>
+    ),
+    gesprekken: (
+      <Kaart titel="Gesprekken en kansen" rechts={<span className="text-xs text-slate-500">{c.gesprekken.length} gesprekken</span>}>
+        <Balken rijen={Object.entries(c.kansen).map(([label, waarde]) => ({ label: 'Kans: ' + label, waarde })).sort((a, b) => b.waarde - a.waarde)} />
+      </Kaart>
+    ),
+    instellingen: (
+      <Kaart titel="Per onderwijsinstelling">
+        <Balken rijen={groepeer(c.feiten.studenten, 'instelling')} eenheid=" st." />
+        <p className="text-[11px] text-slate-400 mt-2">Aantal studenten per instelling ({groepeer(c.feiten.groepen, 'instelling').map(r => r.label + ': ' + r.waarde + ' groep' + (r.waarde === 1 ? '' : 'en')).join(' · ') || 'geen groepen'}).</p>
+      </Kaart>
+    ),
+    tevredenheid: (
+      <Kaart titel="Tevredenheid en regio">
+        <Balken rijen={[1, 2, 3, 4, 5].map(n => ({ label: n + ' / 5', waarde: c.tevreden.filter(x => x.t === n).length }))} />
+        <div className="mt-3"><Balken rijen={groepeer(c.feiten.partners.filter((r, i, a) => true), 'regio')} /></div>
+      </Kaart>
+    ),
+    eigen: (
+      <Kaart titel="Eigen tabellen" rechts={<button type="button" onClick={() => zetTabellen([...tabellen, { id: uid(), wat: 'groepen', per: 'thema' }])} className="text-xs text-brand font-medium hover:underline">+ Tabel toevoegen</button>}>
+        <div className="space-y-4">
+          {tabellen.length === 0 && <p className="text-sm text-slate-400">Nog geen eigen tabellen. Klik op "+ Tabel toevoegen".</p>}
+          {tabellen.map(t => {
+            const rijen = groepeer(c.feiten[t.wat] || [], t.per);
+            const watLabel = (CIJFER_WAT.find(([k]) => k === t.wat) || [])[1], perLabel = (CIJFER_PER.find(([k]) => k === t.per) || [])[1];
+            const totaal = rijen.reduce((n, r) => n + r.waarde, 0);
+            return (
+              <div key={t.id} className="border border-slate-100 rounded-lg p-3">
+                <div className="flex flex-wrap items-center gap-2 mb-2 text-sm">
+                  <select value={t.wat} onChange={e => zetTabellen(tabellen.map(x => x.id === t.id ? { ...x, wat: e.target.value } : x))} className="border border-slate-300 rounded-lg px-2 py-1" aria-label="Wat tellen">
+                    {CIJFER_WAT.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                  <span className="text-slate-500">per</span>
+                  <select value={t.per} onChange={e => zetTabellen(tabellen.map(x => x.id === t.id ? { ...x, per: e.target.value } : x))} className="border border-slate-300 rounded-lg px-2 py-1" aria-label="Verdelen per">
+                    {CIJFER_PER.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                  <span className="ml-auto flex items-center gap-3 text-xs">
+                    <button type="button" onClick={() => { kopieerTabel(watLabel + ' per ' + perLabel.toLowerCase() + ' (' + periodeTekst + ')', [perLabel, watLabel], [...rijen.map(r => [r.label, getal(r.waarde)]), ['Totaal', getal(totaal)]]); kopieerMelding(t.id); }} className="text-brand hover:underline">{gekopieerd === t.id ? '✓ gekopieerd' : '📋 Kopieer voor Excel/Word'}</button>
+                    <button type="button" onClick={() => zetTabellen(tabellen.filter(x => x.id !== t.id))} className="text-slate-400 hover:text-rose-600" aria-label="Tabel verwijderen">✕</button>
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead><tr className="text-left text-xs text-slate-500"><th className="py-1 pr-3 font-medium">{perLabel}</th><th className="py-1 font-medium text-right">{watLabel}</th><th className="py-1 pl-3 w-1/2"></th></tr></thead>
+                    <tbody>
+                      {rijen.map(r => (
+                        <tr key={r.label} className="border-t border-slate-100">
+                          <td className="py-1 pr-3 text-slate-700">{r.label}</td>
+                          <td className="py-1 text-right tabular-nums text-ink font-medium">{getal(r.waarde)}</td>
+                          <td className="py-1 pl-3"><div className="h-2 rounded bg-slate-100"><div className={'h-2 rounded ' + (t.per === 'thema' ? themaKleur(r) : 'bg-brand')} style={{ width: (totaal ? r.waarde / Math.max(...rijen.map(x => x.waarde)) * 100 : 0) + '%' }} /></div></td>
+                        </tr>
+                      ))}
+                      {!rijen.length && <tr><td colSpan="3" className="py-2 text-slate-400">Geen gegevens in deze periode.</td></tr>}
+                      {rijen.length > 0 && <tr className="border-t border-slate-200 font-semibold"><td className="py-1 pr-3">Totaal</td><td className="py-1 text-right tabular-nums">{getal(totaal)}</td><td /></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Kaart>
+    ),
+  };
+
+  const zichtbaar = blokken.filter(b => b.aan);
+  const verplaats = (i, d) => { const n = [...blokken]; const j = i + d; if (j < 0 || j >= n.length) return; [n[i], n[j]] = [n[j], n[i]]; zetBlokken(n); };
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <div>
+          <h1 className="text-2xl font-light text-ink">Cijfers</h1>
+          <p className="text-sm text-slate-500">Alles geteld over {periodeTekst}. Klik op een getal om te zien wat erachter zit.</p>
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <select value={periode.j || ''} onChange={e => zetPeriode({ j: e.target.value ? Number(e.target.value) : 0, s: e.target.value ? periode.s : 0 })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm" aria-label="Schooljaar">
+            <option value="">Alle jaren</option>
+            {jaren.map(j => <option key={j} value={j}>Schooljaar {jaarLabel(j)}</option>)}
+          </select>
+          {periode.j ? (
+            <div className="flex rounded-lg border border-slate-300 overflow-hidden text-sm">
+              {[[0, 'Heel jaar'], [1, 'Semester 1'], [2, 'Semester 2']].map(([w, l]) => (
+                <button key={w} type="button" onClick={() => zetPeriode({ ...periode, s: w })} aria-pressed={periode.s === w} className={'px-2.5 py-1.5 ' + (periode.s === w ? 'bg-brand text-white' : 'text-slate-600 hover:bg-slate-50')}>{l}</button>
+              ))}
+            </div>
+          ) : null}
+          <button type="button" onClick={() => setAanpassen(a => !a)} className={'px-3 py-1.5 rounded-lg border text-sm ' + (aanpassen ? 'bg-brand text-white border-brand' : 'border-slate-300 text-slate-600 hover:bg-slate-50')}>{aanpassen ? '✓ Klaar' : '⚙ Aanpassen'}</button>
+        </div>
+      </div>
+
+      {aanpassen && (
+        <div className="bg-white rounded-xl border border-brand/40 p-4">
+          <div className="text-sm font-semibold text-ink mb-1">Wat wil je zien?</div>
+          <p className="text-xs text-slate-500 mb-3">Zet onderdelen aan of uit en verander de volgorde. Dit wordt onthouden op deze computer.</p>
+          <div className="space-y-1">
+            {blokken.map((b, i) => (
+              <div key={b.id} className="flex items-center gap-2 text-sm">
+                <input type="checkbox" className="accent-brand" checked={b.aan} onChange={() => zetBlokken(blokken.map(x => x.id === b.id ? { ...x, aan: !x.aan } : x))} id={'blok-' + b.id} />
+                <label htmlFor={'blok-' + b.id} className="flex-1 text-slate-700">{(CIJFER_BLOKKEN.find(([id]) => id === b.id) || [])[1]}</label>
+                <button type="button" onClick={() => verplaats(i, -1)} disabled={i === 0} className="px-1.5 text-slate-500 hover:text-ink disabled:opacity-30" aria-label="Omhoog">↑</button>
+                <button type="button" onClick={() => verplaats(i, 1)} disabled={i === blokken.length - 1} className="px-1.5 text-slate-500 hover:text-ink disabled:opacity-30" aria-label="Omlaag">↓</button>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={() => zetBlokken(CIJFER_BLOKKEN.map(([id]) => ({ id, aan: true })))} className="mt-3 text-xs text-brand hover:underline">Standaardindeling terugzetten</button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {zichtbaar.map(b => (
+          <div key={b.id} className={b.id === 'tegels' || b.id === 'eigen' ? 'lg:col-span-2' : ''}>{inhoud[b.id]}</div>
+        ))}
+      </div>
+      {!zichtbaar.length && <p className="text-sm text-slate-400">Alle onderdelen staan uit. Klik op ⚙ Aanpassen om ze weer aan te zetten.</p>}
+
+      <Modal open={!!lijst} onClose={() => setLijst(null)} title={lijst ? lijst.titel : ''}>
+        {lijst && (
+          <div>
+            <ul className="divide-y divide-slate-100 text-sm max-h-[60vh] overflow-y-auto">{lijst.regels.map((r, i) => <li key={i} className="py-1.5 text-slate-700">{r}</li>)}</ul>
+            <div className="flex justify-end mt-3"><button type="button" onClick={() => { kopieerTabel(lijst.titel, [lijst.titel], lijst.regels.map(r => [r])); kopieerMelding('lijst'); }} className="text-sm text-brand hover:underline">{gekopieerd === 'lijst' ? '✓ gekopieerd' : '📋 Kopieer lijst'}</button></div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+/* ============================================================
    APP
    ============================================================ */
 function App() {
@@ -5371,6 +5713,10 @@ function App() {
     return o.opvolgen.length + o.signalen.filter(x => !x.verborgen && (x.niveau === 'urgent' || x.niveau === 'binnenkort')).length + voorJouVan(groepen, ik).length;
   }, [groepen, checklist, team]);
   const [vanTaken, setVanTaken] = useState(false);
+  // tabblad Cijfers: Overzicht of Uren partners (per computer onthouden); "bekijk in uren" springt naar Uren partners
+  const [cijferDeel, setCijferDeel] = useState(() => loadLS('cgt_cijfers_deel', 'overzicht') || 'overzicht');
+  const zetCijferDeel = w => { setCijferDeel(w); saveLS('cgt_cijfers_deel', w); };
+  useEffect(() => { if (pendingUrenOrg) setCijferDeel('uren'); }, [pendingUrenOrg]);
   function openGroepFromTaken(gid) { setTab('groepen'); setPendingGroepId(gid); setVanTaken(true); }
   useEffect(() => { if (tab !== 'groepen') setVanTaken(false); }, [tab]);
 
@@ -5399,7 +5745,7 @@ function App() {
             <TabBtn id="trajecten">Trajecten</TabBtn>
             <TabBtn id="contacten">Contacten</TabBtn>
             <TabBtn id="groepen">Studentengroepen</TabBtn>
-            <TabBtn id="uren">Urenverantwoording partners</TabBtn>
+            <TabBtn id="uren">Cijfers</TabBtn>
           </nav>
           {/* Synchronisatiestatus + opslag-menu rechtsboven */}
           <div className="ml-auto pb-2 relative flex items-center gap-3">
@@ -5554,6 +5900,17 @@ function App() {
           />
         )}
         {tab === 'uren' && (
+          <div className="flex gap-1 mb-4 rounded-lg border border-slate-200 bg-white p-1 w-fit">
+            {[['overzicht', '📊 Overzicht'], ['uren', '⏱ Uren partners']].map(([w, l]) => (
+              <button key={w} type="button" onClick={() => zetCijferDeel(w)} aria-pressed={cijferDeel === w}
+                className={'px-3 py-1.5 rounded-md text-sm ' + (cijferDeel === w ? 'bg-brand text-white' : 'text-slate-600 hover:bg-slate-50')}>{l}</button>
+            ))}
+          </div>
+        )}
+        {tab === 'uren' && cijferDeel === 'overzicht' && (
+          <CijfersOverzicht trajecten={trajecten} contacten={contacten} groepen={groepen} uren={urenAlles} />
+        )}
+        {tab === 'uren' && cijferDeel === 'uren' && (
           <UrenTab
             uren={urenAlles} setUren={setUrenHandmatig} targets={targets} setTargets={setTargets} contacten={contacten}
             externalOrg={pendingUrenOrg} clearExternalOrg={() => setPendingUrenOrg(null)}

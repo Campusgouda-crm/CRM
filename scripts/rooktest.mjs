@@ -46,7 +46,7 @@ const resultaat = [];
 for (const thema of ['licht', 'donker']) {
   await stuur('Page.navigate', { url: `http://127.0.0.1:${poort}/index.html` }); await slaap(1500);
   await js(`localStorage.setItem('cgt_weergave', '${thema}'); location.reload(); 1`); await slaap(2000);
-  const tabs = await js(`[...document.querySelectorAll('nav button, header button')].map(b => b.innerText.trim().replace(/\\s+\\d+$/, '')).filter(t => ['Taken','Trajecten','Contacten','Studentengroepen','Urenverantwoording partners'].includes(t))`) || [];
+  const tabs = await js(`[...document.querySelectorAll('nav button, header button')].map(b => b.innerText.trim().replace(/\\s+\\d+$/, '')).filter(t => ['Taken','Trajecten','Contacten','Studentengroepen','Cijfers'].includes(t))`) || [];
   for (const t of tabs) {
     await js(`[...document.querySelectorAll('button')].find(b => b.innerText.trim().replace(/\\s+\\d+$/, '') === ${JSON.stringify(t)}).click(); 1`); await slaap(500);
     const leeg = await js(`document.getElementById('root').innerText.trim().length < 20`);
