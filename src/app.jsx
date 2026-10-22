@@ -5,6 +5,8 @@ const { useState, useEffect, useMemo } = React;
    CONSTANTEN
    ============================================================ */
 const THEME = window.CG_THEME;
+// versienummer van de app (alleen in de geïnstalleerde app; de bestandsversie heeft er geen)
+const APP_VERSIE = (document.querySelector('meta[name="cg-versie"]') || {}).content || '';
 const THEMAS = ['Zorg', 'Bodem', 'Logistiek'];
 const STATUSSEN = ['Idee', 'In behandeling', 'Definitief', 'Actief', 'Afgerond'];
 // Semesters/startmomenten voor trajecten (een traject kan in meerdere semesters vallen)
@@ -4628,6 +4630,7 @@ function App() {
           : <span>data lokaal in deze browser (niet gedeeld)</span>}
         {' '}· <button onClick={exportData} className="underline hover:text-slate-600">back-up exporteren</button>
         {' '}· <button onClick={() => setFeedbackOpen(true)} className="underline hover:text-slate-600">feedback</button>
+        {APP_VERSIE && <>{' '}· <span title={'Versie ' + APP_VERSIE}>versie {APP_VERSIE.split('-')[0]}</span></>}
       </footer>
 
       <Modal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} title="Feedback van collega's">
