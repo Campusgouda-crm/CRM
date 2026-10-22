@@ -254,6 +254,23 @@ function laatsteInteractie(c) {
   const data = (c.interacties || []).map(i => i.datum).filter(Boolean).sort();
   return data.length ? data[data.length - 1] : null;
 }
+// ---------- bewaartermijn per contact (AVG) ----------
+// Contacten zonder gesprek: de termijn telt vanaf de invoering van deze regel.
+const BEWAAR_START = '2026-10-22';
+const BEWAAR_SOORTEN = [
+  { id: 'netwerk', kort: 'Netwerkcontact', label: 'Netwerkcontact — elke 2 jaar een check', dagen: 730, check: true },
+  { id: 'tijdelijk-1j', kort: 'Tijdelijk', label: 'Tijdelijk (bijv. student) — 1 jaar na het laatste contact', dagen: 365 },
+  { id: 'tijdelijk-6m', kort: 'Tijdelijk', label: 'Tijdelijk — half jaar na het laatste contact', dagen: 182 },
+];
+function bewaarSoortAuto(c) { return /student|stagiair|afstudeer/i.test(String((c && c.functie) || '')) ? 'tijdelijk-1j' : 'netwerk'; }
+function bewaarSoort(c) { return BEWAAR_SOORTEN.find(x => x.id === ((c && c.bewaren) || bewaarSoortAuto(c))) || BEWAAR_SOORTEN[0]; }
+// datum waarop de termijn afloopt (tijdelijk) of een check nodig is (netwerk)
+function bewaarDatum(c) {
+  const ref = [laatsteInteractie(c), c.bewaarCheck].filter(Boolean).sort().pop() || BEWAAR_START;
+  return CGT.addDays(ref, bewaarSoort(c).dagen);
+}
+const datumMetJaar = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+function bewaarVerlopen(c, vandaag) { return bewaarDatum(c) <= (vandaag || CGT.vandaagISO()); }
 function dagenGeleden(isoDatum) {
   if (!isoDatum) return null;
   const d = new Date(isoDatum + 'T00:00:00');
@@ -1467,6 +1484,13 @@ function ContactForm({ initial, trajecten, contacten = [], onSave, onCancel }) {
       <Field label="Eigenaar (Campus Gouda)">
         <input className={inputCls} list="cg-team" value={f.eigenaar || ''} onChange={set('eigenaar')} placeholder="verantwoordelijk teamlid (kies of typ)" />
       </Field>
+      <Field label="Bewaartermijn (AVG)" full>
+        <select className={inputCls} value={f.bewaren || ''} onChange={set('bewaren')}>
+          <option value="">Automatisch: {bewaarSoort({ ...f, bewaren: '' }).label}</option>
+          {BEWAAR_SOORTEN.map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
+        </select>
+        <p className="text-xs text-slate-400 mt-1">Telt vanaf het laatste gesprek. Is de termijn voorbij, dan krijg je bij Taken de vraag: behouden of verwijderen. Er wordt niets vanzelf verwijderd.</p>
+      </Field>
       <Field label="Relevant voor thema('s)" full>
         <div className="flex flex-wrap gap-x-4 gap-y-1 border border-slate-200 rounded-lg p-2">
           {THEMAS.map(th => {
@@ -1586,6 +1610,11 @@ function ContactDetail({ contact, trajecten, uren = [], kansSoorten = KANS_STAND
                 ? <span>{laatsteInteractie(c)} <span className="text-slate-400">({dagenGeleden(laatsteInteractie(c))} dagen geleden)</span></span>
                 : <span className="text-slate-300">nog geen</span>
             }</div>
+            <div><span className="text-slate-500">Bewaren: </span>
+              {bewaarSoort(c).check ? 'check op ' : 'verwijderen na '}{datumMetJaar(bewaarDatum(c))}
+              <span className="text-slate-400"> ({bewaarSoort(c).kort}{c.bewaren ? '' : ', automatisch'})</span>
+              {bewaarVerlopen(c) && <Badge className="ml-1 bg-amber-50 text-amber-700 border-amber-200">termijn voorbij</Badge>}
+            </div>
           </div>
           {c.notities && (
             <div className="bg-white rounded-xl border border-slate-200 p-4">
@@ -3074,7 +3103,14 @@ function Kop({ titel, sub, rechts }) {
 /* ============================================================
    TABBLAD TAKEN: wat moet er gebeuren?
    ============================================================ */
-function TakenTab({ groepen, setGroepen, checklist, onOpenGroep }) {
+function TakenTab({ groepen, setGroepen, checklist, onOpenGroep, contacten = [], setContacten, onOpenContact }) {
+  const verlopenContacten = useMemo(() => (contacten || []).filter(c => bewaarVerlopen(c)).sort((a, b) => bewaarDatum(a).localeCompare(bewaarDatum(b))), [contacten]);
+  const behoudContact = (id) => setContacten && setContacten(prev => prev.map(x => x.id === id ? { ...x, bewaarCheck: CGT.vandaagISO() } : x));
+  const verwijderContact = (c) => {
+    if (!setContacten) return;
+    if (!confirm(`${c.naam || 'Dit contact'} (${c.organisatie || 'geen organisatie'}) verwijderen?\n\nDe uren uit gesprekken met deze persoon blijven in de urenverantwoording staan, maar zonder naam. Dit kan niet ongedaan worden gemaakt.`)) return;
+    setContacten(prev => prev.filter(x => x.id !== c.id));
+  };
   const [naam, setNaam] = useState(() => mijnNaam());
   const [alleenMijn, setAlleenMijn] = useState(() => !!loadLS(LS_ALLEENMIJN, false));
   const [toonOverig, setToonOverig] = useState(false);
@@ -3135,6 +3171,23 @@ function TakenTab({ groepen, setGroepen, checklist, onOpenGroep }) {
           {toonOverig ? 'Checklist en gegevens weer inklappen' : <>Daarnaast: <span className="font-medium text-ink">{tel('checklist')}× checklist loopt achter</span> en <span className="font-medium text-ink">{tel('gegevens')}× gegevens ontbreken</span>. Toon ze</>}
         </button>
         {toonOverig && <div className="mt-2"><Lijst>{overig.map(s => <SignaalRegel key={s.id} s={s} metGroep onOpenGroep={onOpenGroep} onLater={acties.later} onGemaild={gemaild} onActie={acties.actie} />)}</Lijst></div>}
+      </>)}
+
+      {verlopenContacten.length > 0 && (<>
+        <Kop titel="Bewaartermijnen" sub="Contacten waarvan de bewaartermijn voorbij is (AVG). Kies per contact: behouden of verwijderen. De app verwijdert niets vanzelf." />
+        <Lijst>{verlopenContacten.map(c => (
+          <div key={c.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <button onClick={() => onOpenContact && onOpenContact(c.id)} className="text-sm font-medium text-ink hover:underline text-left">{c.naam || '—'}</button>
+              {c.organisatie && <span className="text-xs text-slate-500"> · {c.organisatie}</span>}
+              <p className="text-xs text-slate-500">{bewaarSoort(c).check ? 'Netwerkcontact: tijd voor de tweejaarlijkse check' : 'Tijdelijk contact: termijn voorbij'} · laatste contact {laatsteInteractie(c) ? datumMetJaar(laatsteInteractie(c)) : 'onbekend'}</p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={() => behoudContact(c.id)} className={knopKleinPrimair} title={'Bewaren; de termijn begint opnieuw (' + (bewaarSoort(c).check ? 'over 2 jaar weer een check' : 'verwijderen over ' + (bewaarSoort(c).dagen > 200 ? '1 jaar' : 'een half jaar')) + ')'}>Behouden</button>
+              <button onClick={() => verwijderContact(c)} className="px-2.5 py-1 rounded-lg border border-rose-300 text-rose-600 text-xs hover:bg-rose-50">Verwijderen</button>
+            </div>
+          </div>
+        ))}</Lijst>
       </>)}
 
       {o.gepland.length > 0 && (<>
@@ -4684,6 +4737,14 @@ function App() {
   // de urenverantwoording toont handmatige regels én regels uit gesprekken; alleen de handmatige worden opgeslagen
   const urenGesprek = useMemo(() => urenUitGesprekken(contacten), [contacten]);
   const urenAlles = useMemo(() => [...uren, ...urenGesprek], [uren, urenGesprek]);
+  // contacten wijzigen; wordt er een contact verwijderd, dan blijven de uren uit zijn gesprekken (zonder naam) staan
+  const setContactenMetUren = (upd) => setContacten(prev => {
+    const next = typeof upd === 'function' ? upd(prev) : upd;
+    const weg = prev.filter(c => !(next || []).some(n => n.id === c.id));
+    const bewaar = urenUitGesprekken(weg).map(r => ({ ...r, id: 'bewaard-' + r.id.replace(/^gesprek-/, ''), bron: '', contactId: '', verbondenPersoon: '', beschrijving: 'Gesprek (contact verwijderd)' }));
+    if (bewaar.length) setUren(u => [...u, ...bewaar.filter(r => !u.some(x => x.id === r.id))]);
+    return next;
+  });
   const setUrenHandmatig = (upd) => setUren(prev => {
     const vol = typeof upd === 'function' ? upd([...prev, ...urenGesprek]) : upd;
     return (vol || []).filter(r => r.bron !== 'gesprek');
@@ -5252,7 +5313,8 @@ function App() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
         {tab === 'taken' && (
-          <TakenTab groepen={groepen} setGroepen={setGroepen} checklist={checklist} onOpenGroep={openGroepFromTaken} />
+          <TakenTab groepen={groepen} setGroepen={setGroepen} checklist={checklist} onOpenGroep={openGroepFromTaken}
+            contacten={contacten} setContacten={setContactenMetUren} onOpenContact={(id) => { setTab('contacten'); setOpenContactId(id); }} />
         )}
         {tab === 'trajecten' && (
           <TrajectenTab
@@ -5273,7 +5335,7 @@ function App() {
         )}
         {tab === 'contacten' && (
           <ContactenTab
-            contacten={contacten} setContacten={setContacten} trajecten={trajecten} uren={urenAlles}
+            contacten={contacten} setContacten={setContactenMetUren} trajecten={trajecten} uren={urenAlles}
             openContactId={openContactId} setOpenContactId={setOpenContactId}
             pendingNewContact={pendingNewContact} clearPendingNewContact={() => setPendingNewContact(null)}
             onOpenTraject={openTrajectFromContact} onOpenUrenOrg={openUrenForOrg}
