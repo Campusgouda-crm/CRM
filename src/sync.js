@@ -38,7 +38,14 @@
     if (isObj(oud) && isObj(nieuw)) {
       new Set([...Object.keys(oud), ...Object.keys(nieuw)]).forEach(k => {
         if (!(k in nieuw) || nieuw[k] === undefined) { if (k in oud && oud[k] !== undefined) uit.push({ p: pad.concat(k), d: 1 }); }
-        else if (!(k in oud) || oud[k] === undefined) uit.push({ p: pad.concat(k), v: kloon(nieuw[k]) });
+        else if (!(k in oud) || oud[k] === undefined) {
+          // nieuw onderdeel: per item/sleutel vastleggen, zodat twee mensen die tegelijk het eerste item
+          // toevoegen elkaar niet overschrijven (bijv. eerste aantekening, eerste moment, eerste vinkje)
+          const nv = nieuw[k];
+          if (isIdLijst(nv)) verschil([], nv, pad.concat(k), uit);
+          else if (isObj(nv) && Object.keys(nv).length) verschil({}, nv, pad.concat(k), uit);
+          else uit.push({ p: pad.concat(k), v: kloon(nv) });
+        }
         else verschil(oud[k], nieuw[k], pad.concat(k), uit);
       });
       return uit;

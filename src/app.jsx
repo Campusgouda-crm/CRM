@@ -444,6 +444,35 @@ function seedContacten(trajecten) { return []; }
 /* ============================================================
    KLEINE UI-COMPONENTEN
    ============================================================ */
+// ---------- tegelijk bewerken ----------
+// Een formulier toont de stand van het moment van openen. Bij opslaan gaan alleen de velden die jij
+// veranderde over de actuele versie heen; wat een collega intussen aan andere velden deed, blijft staan.
+const zelfde = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function voegFormulierSamen(origineel, formulier, huidig) {
+  if (!huidig || !origineel) return formulier;
+  const uit = { ...huidig };
+  new Set([...Object.keys(origineel), ...Object.keys(formulier)]).forEach(k => {
+    if (!zelfde(origineel[k], formulier[k])) { if (formulier[k] === undefined) delete uit[k]; else uit[k] = formulier[k]; }
+  });
+  return uit;
+}
+// lijst (bijv. het team): wat jij toevoegde, verwijderde of aanpaste; de rest blijft zoals het nu is
+function voegLijstSamen(origineel, nieuw, huidig) {
+  const oId = new Map((origineel || []).map(x => [x.id, x])), nId = new Map((nieuw || []).map(x => [x.id, x]));
+  const uit = (huidig || []).filter(x => !(oId.has(x.id) && !nId.has(x.id)))
+    .map(x => nId.has(x.id) ? voegFormulierSamen(oId.get(x.id) || x, nId.get(x.id), x) : x);
+  (nieuw || []).forEach(x => { if (!oId.has(x.id) && !uit.some(y => y.id === x.id)) uit.push(x); });
+  return uit;
+}
+function AndereWijziging({ origineel, huidig, wat }) {
+  if (!origineel || !huidig || zelfde(origineel, huidig)) return null;
+  return (
+    <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status">
+      Een collega heeft {wat} net aangepast. Geen probleem: bij opslaan worden alleen de velden bijgewerkt die jij verandert. Wat je collega deed, blijft staan.
+    </div>
+  );
+}
+
 function Badge({ children, className = '' }) {
   return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${className}`}>{children}</span>;
 }
@@ -909,7 +938,7 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
   function saveTraject(f) {
     setTrajecten(prev => {
       const exists = prev.some(t => t.id === f.id);
-      return exists ? prev.map(t => t.id === f.id ? f : t) : [...prev, f];
+      return exists ? prev.map(t => t.id === f.id ? voegFormulierSamen(editing, f, t) : t) : [...prev, f];
     });
     setFormOpen(false); setEditing(null);
     setDetailId(f.id);
@@ -1150,6 +1179,7 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
           onOpenContact={(cid) => onOpenContact(cid)}
         />
         <Modal open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} title="Traject bewerken" wide>
+          <AndereWijziging origineel={editing} huidig={editing && trajecten.find(t => t.id === editing.id)} wat="dit traject" />
           <TrajectForm initial={editing || leegTraject()} contacten={contacten} onCreateContact={onCreateContact} onSave={saveTraject} onCancel={() => { setFormOpen(false); setEditing(null); }} />
         </Modal>
       </div>
@@ -1276,7 +1306,8 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
 
       <Modal open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }}
         title={editing && trajecten.some(t=>t.id===editing.id) ? 'Traject bewerken' : 'Nieuw traject'} wide>
-        <TrajectForm initial={editing || leegTraject()} contacten={contacten} onCreateContact={onCreateContact} onSave={saveTraject} onCancel={() => { setFormOpen(false); setEditing(null); }} />
+        <AndereWijziging origineel={editing} huidig={editing && trajecten.find(t => t.id === editing.id)} wat="dit traject" />
+          <TrajectForm initial={editing || leegTraject()} contacten={contacten} onCreateContact={onCreateContact} onSave={saveTraject} onCancel={() => { setFormOpen(false); setEditing(null); }} />
       </Modal>
 
       <Modal open={wervingOpen} onClose={() => setWervingOpen(false)} title="Werving-uitdraai genereren" wide>
@@ -1559,7 +1590,7 @@ function ContactDetail({ contact, trajecten, uren = [], kansSoorten = KANS_STAND
   function saveInteractie(itx) {
     const exists = (c.interacties || []).some(i => i.id === itx.id);
     const interacties = exists
-      ? c.interacties.map(i => i.id === itx.id ? itx : i)
+      ? c.interacties.map(i => i.id === itx.id ? voegFormulierSamen(nieuw, itx, i) : i)
       : [itx, ...(c.interacties || [])];
     onUpdate({ ...c, interacties });
     setIntOpen(false); setNieuw(null);
@@ -1733,6 +1764,7 @@ function ContactDetail({ contact, trajecten, uren = [], kansSoorten = KANS_STAND
       </div>
 
       <Modal open={intOpen} onClose={() => { setIntOpen(false); setNieuw(null); }} title={nieuw && (c.interacties||[]).some(i=>i.id===nieuw.id) ? 'Interactie bewerken' : 'Nieuwe interactie'}>
+        {nieuw && <AndereWijziging origineel={nieuw} huidig={(c.interacties || []).find(i => i.id === nieuw.id)} wat="dit gesprek" />}
         {nieuw && <InteractieForm initial={nieuw} kansSoorten={kansSoorten} onSave={saveInteractie} onCancel={() => { setIntOpen(false); setNieuw(null); }} />}
       </Modal>
     </div>
@@ -1963,7 +1995,7 @@ function ContactenTab({ contacten, setContacten, trajecten, uren = [], openConta
   function saveContact(f) {
     const key = normaliseerOrg(f.organisatie);
     setContacten(prev => {
-      const lijst = prev.some(c=>c.id===f.id) ? prev.map(c=>c.id===f.id?f:c) : [...prev, f];
+      const lijst = prev.some(c=>c.id===f.id) ? prev.map(c=>c.id===f.id?voegFormulierSamen(editing, f, c):c) : [...prev, f];
       if (!key) return lijst;
       // adres en type horen bij de organisatie: ook bij collega's bijwerken
       return lijst.map(c => (c.id === f.id || normaliseerOrg(c.organisatie) !== key) ? c : {
@@ -1998,6 +2030,7 @@ function ContactenTab({ contacten, setContacten, trajecten, uren = [], openConta
           onOpenUrenOrg={onOpenUrenOrg}
         />
         <Modal open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} title="Contact bewerken">
+          <AndereWijziging origineel={editing} huidig={editing && contacten.find(x => x.id === editing.id)} wat="dit contact" />
           <ContactForm initial={editing} trajecten={trajecten} contacten={contacten} onSave={saveContact} onCancel={() => { setFormOpen(false); setEditing(null); }} />
         </Modal>
       </div>
@@ -2142,6 +2175,7 @@ function ContactenTab({ contacten, setContacten, trajecten, uren = [], openConta
       )}
 
       <Modal open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} title="Nieuw contact">
+        <AndereWijziging origineel={editing} huidig={editing && contacten.find(x => x.id === editing.id)} wat="dit contact" />
         <ContactForm initial={editing || leegContact()} trajecten={trajecten} contacten={contacten} onSave={saveContact} onCancel={() => { setFormOpen(false); setEditing(null); }} />
       </Modal>
     </div>
@@ -2490,7 +2524,7 @@ function UrenTab({ uren, setUren, targets, setTargets, contacten, externalOrg, c
   }
 
   function saveUur(r) {
-    setUren(prev => prev.some(x=>x.id===r.id) ? prev.map(x=>x.id===r.id?r:x) : [...prev, r]);
+    setUren(prev => prev.some(x=>x.id===r.id) ? prev.map(x=>x.id===r.id?voegFormulierSamen(editing, r, x):x) : [...prev, r]);
     setFormOpen(false); setEditing(null);
   }
   function delUur(id) { if (confirm('Deze urenregel verwijderen?')) setUren(prev => prev.filter(r => r.id !== id)); }
@@ -2769,6 +2803,7 @@ function UrenTab({ uren, setUren, targets, setTargets, contacten, externalOrg, c
       </div>
 
       <Modal open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} title={editing && uren.some(r=>r.id===editing.id) ? 'Urenregel bewerken' : 'Nieuwe urenregel'} wide>
+        <AndereWijziging origineel={editing} huidig={editing && uren.find(x => x.id === editing.id)} wat="deze urenregel" />
         <UurForm initial={editing || leegUur()} contacten={contacten} collegas={collegas} onSave={saveUur} onCancel={() => { setFormOpen(false); setEditing(null); }} />
       </Modal>
       <Modal open={targetsOpen} onClose={() => setTargetsOpen(false)} title="Doelstellingen (uren) instellen">
@@ -4153,7 +4188,7 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
 
   const detail = groepen.find(g => g.id === detailId);
 
-  function saveGroep(g) { setGroepen(prev => prev.some(x=>x.id===g.id) ? prev.map(x=>x.id===g.id?g:x) : [...prev, g]); setFormOpen(false); setEditing(null); setDetailId(g.id); }
+  function saveGroep(g) { setGroepen(prev => prev.some(x=>x.id===g.id) ? prev.map(x=>x.id===g.id?voegFormulierSamen(editing, g, x):x) : [...prev, g]); setFormOpen(false); setEditing(null); setDetailId(g.id); }
   function delGroep(id) { if (!confirm('Deze studentengroep verwijderen?')) return; setGroepen(prev => prev.filter(g => g.id !== id)); setDetailId(null); }
 
   // parse één werkblad → studentengroepen (robuust voor wisselende lay-outs)
@@ -4373,6 +4408,7 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
           onDelete={() => delGroep(detail.id)}
           onOpenTraject={onOpenTraject} />
         <Modal open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} title="Studentengroep bewerken" wide>
+          <AndereWijziging origineel={editing} huidig={editing && groepen.find(x => x.id === editing.id)} wat="deze groep" />
           <GroepForm initial={editing || leegGroep()} trajecten={trajecten} contacten={contacten} groepen={groepen} onSave={saveGroep} onCancel={() => { setFormOpen(false); setEditing(null); }} />
         </Modal>
       </div>
@@ -4437,7 +4473,8 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
       </div>
 
       <Modal open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} title={editing && groepen.some(g=>g.id===editing.id) ? 'Studentengroep bewerken' : 'Nieuwe studentengroep'} wide>
-        <GroepForm initial={editing || leegGroep()} trajecten={trajecten} contacten={contacten} groepen={groepen} onSave={saveGroep} onCancel={() => { setFormOpen(false); setEditing(null); }} />
+        <AndereWijziging origineel={editing} huidig={editing && groepen.find(x => x.id === editing.id)} wat="deze groep" />
+          <GroepForm initial={editing || leegGroep()} trajecten={trajecten} contacten={contacten} groepen={groepen} onSave={saveGroep} onCancel={() => { setFormOpen(false); setEditing(null); }} />
       </Modal>
 
       <Modal open={impOpen} onClose={() => { setImpOpen(false); setImpParsed(null); impWbRef.current = null; }} title="Studentengroepen importeren">
@@ -4653,13 +4690,15 @@ function NamenGelijktrekken({ team, gegevens, onToepassen }) {
 }
 
 function TeamBeheer({ team, onSave, onCancel, gegevens, onGelijktrekken }) {
+  const [origineel] = useState(() => (team || []).map(p => ({ ...p })));
   const [rijen, setRijen] = useState(() => sorteerTeam(team).map(p => ({ ...p })));
   const zet = (id, k, v) => setRijen(prev => prev.map(r => r.id === id ? { ...r, [k]: v } : r));
   const voegToe = () => setRijen(prev => [...prev, { id: uid(), naam: '', rol: '' }]);
   const weg = (id) => setRijen(prev => prev.filter(r => r.id !== id));
-  const opslaan = () => onSave(sorteerTeam(rijen.map(r => ({ ...r, naam: String(r.naam || '').trim(), rol: String(r.rol || '').trim() })).filter(r => r.naam)));
+  const opslaan = () => onSave(sorteerTeam(rijen.map(r => ({ ...r, naam: String(r.naam || '').trim(), rol: String(r.rol || '').trim() })).filter(r => r.naam)), origineel);
   return (
     <div className="space-y-3">
+      <AndereWijziging origineel={sorteerTeam(origineel)} huidig={sorteerTeam(team)} wat="het team" />
       <p className="text-sm text-slate-500">Wie werkt er bij Campus Gouda, en in welke rol? Deze namen komen in de keuzelijsten: senior, junior, contact Campus Gouda en "jouw naam". Het team staat in de gedeelde map, dus iedereen ziet hetzelfde.</p>
       {rijen.length === 0 && <p className="text-sm text-slate-400 italic">Nog niemand ingevuld. Klik op "+ Persoon toevoegen".</p>}
       <div className="space-y-2">
@@ -5414,7 +5453,7 @@ function App() {
       </footer>
 
       <Modal open={teamOpen} onClose={() => setTeamOpen(false)} title="Team en rollen">
-        {teamOpen && <TeamBeheer team={team} onSave={(t) => { setTeam(t); setTeamOpen(false); }} onCancel={() => setTeamOpen(false)}
+        {teamOpen && <TeamBeheer team={team} onSave={(t, origineel) => { setTeam(prev => sorteerTeam(voegLijstSamen(origineel, t, prev))); setTeamOpen(false); }} onCancel={() => setTeamOpen(false)}
           gegevens={{ trajecten, groepen, contacten, uren }}
           onGelijktrekken={(tabel) => {
             let n = 0;
