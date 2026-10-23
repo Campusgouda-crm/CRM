@@ -907,6 +907,7 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
   const [fThema, setFThema] = useState('');
   const [fOpleiding, setFOpleiding] = useState('');
   const [fContact, setFContact] = useState('');
+  const [fCollega, setFCollega] = useState('');
   const [fDefinitief, setFDefinitief] = useState('');
   const [fStatus, setFStatus] = useState('');
   const [fSemester, setFSemester] = useState('');
@@ -923,10 +924,11 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
     trajecten.forEach(t => tagList(t.opleidingen).forEach(o => set.add(o)));
     return [...set].sort();
   }, [trajecten]);
+  const collegasTraject = useMemo(() => losseNamen(trajecten.flatMap(t => [t.senior, t.junior]).filter(Boolean), TEAM_NAMEN), [trajecten]);
   const contactpersonen = useMemo(() => {
     const set = new Set();
-    trajecten.forEach(t => trajectContactNamen(t).forEach(n => set.add(n)));
-    return [...set].sort();
+    trajecten.forEach(t => trajectContactNamen(t).forEach(n => naamLijst(n).forEach(x => set.add(x))));
+    return losseNamen([...set]);
   }, [trajecten, contactById]);
 
   const filtered = useMemo(() => {
@@ -937,7 +939,8 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
       if (fThema && t.thema !== fThema) return false;
       if (fStatus && t.status !== fStatus) return false;
       if (fDefinitief && t.definitief !== fDefinitief) return false;
-      if (fContact && !trajectContactNamen(t).includes(fContact)) return false;
+      if (fContact && !trajectContactNamen(t).some(n => heeftNaam(n, fContact))) return false;
+      if (fCollega && !heeftNaam(t.senior, fCollega) && !heeftNaam(t.junior, fCollega)) return false;
       if (fOpleiding && !tagList(t.opleidingen).includes(fOpleiding)) return false;
       if (fSemester && !(t.semesters || []).includes(fSemester)) return false;
       if (q) {
@@ -946,7 +949,7 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
       }
       return true;
     });
-  }, [trajecten, zoek, fThema, fOpleiding, fContact, fDefinitief, fStatus, fSemester, fArchief, contactById]);
+  }, [trajecten, zoek, fThema, fOpleiding, fContact, fCollega, fDefinitief, fStatus, fSemester, fArchief, contactById]);
 
   const detail = trajecten.find(t => t.id === detailId);
 
@@ -996,7 +999,7 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
     downloadCSV(rows, 'campus-gouda-trajecten.csv');
   }
   function resetFilters() {
-    setZoek(''); setFThema(''); setFOpleiding(''); setFContact(''); setFDefinitief(''); setFStatus(''); setFSemester(''); setFArchief('actief');
+    setZoek(''); setFThema(''); setFOpleiding(''); setFContact(''); setFCollega(''); setFDefinitief(''); setFStatus(''); setFSemester(''); setFArchief('actief');
   }
 
   // Werving-uitdraai openen: standaard alle nu-gefilterde trajecten geselecteerd
@@ -1239,6 +1242,9 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
         </select>
         <select value={fContact} onChange={e=>setFContact(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
           <option value="">Alle contactpersonen</option>{contactpersonen.map(x=><option key={x}>{x}</option>)}
+        </select>
+        <select value={fCollega} onChange={e=>setFCollega(e.target.value)} aria-label="Collega (senior of junior)" className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+          <option value="">Alle collega's (senior/junior)</option>{collegasTraject.map(x=><option key={x}>{x}</option>)}
         </select>
         <select value={fDefinitief} onChange={e=>setFDefinitief(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
           <option value="">Definitief: alle</option>{DEFINITIEF_OPTS.map(x=><option key={x}>{x}</option>)}
@@ -3639,6 +3645,25 @@ function GroepGegevens({ g }) {
 /* ============================================================
    STUDENTENGROEPEN-TAB
    ============================================================ */
+// ---------- semester van een studentengroep ----------
+// Elk semester begin je met een nieuwe set groepen. Een groep hoort bij het semester dat erbij is gezet
+// (bij de import of in het formulier); zonder dat volgt het uit de start of kick-off.
+const semNaam = x => x ? 'Semester ' + x.s + ' ' + x.j + '/' + (x.j + 1) : '';
+function groepSemester(g) {
+  if (g && g.semester) return g.semester;
+  const p = CGT.planning(g, CGT.vandaagISO());
+  return semNaam(semesterVan(p.start || p.kickoff || ''));
+}
+const huidigSemesterNaam = () => semNaam(semesterVan(CGT.vandaagISO()));
+const volgendSemesterNaam = () => semNaam(semVolgende(semesterVan(CGT.vandaagISO())));
+const semesterVolgorde = n => { const m = String(n || '').match(/Semester\s*(\d)\s*(\d{4})/); return m ? +m[2] * 10 + +m[1] : 0; };
+// unieke losse namen uit velden als "naam1/naam2" of "naam1, naam2"
+function losseNamen(waarden, extra) {
+  const m = new Map();
+  [...(extra || []), ...waarden.flatMap(naamLijst)].forEach(n => { const k = normNaam(n); if (k && !m.has(k)) m.set(k, n); });
+  return [...m.values()].sort((a, b) => a.localeCompare(b, 'nl'));
+}
+
 function GroepForm({ initial, trajecten, contacten, groepen = [], onSave, onCancel }) {
   const isNieuw = !String(initial.groepsnummer || '').trim();
   const [f, setF] = useState(() => {
@@ -3681,6 +3706,12 @@ function GroepForm({ initial, trajecten, contacten, groepen = [], onSave, onCanc
           <button type="button" onClick={autoNummer} title="Automatisch nummeren op basis van thema" className="px-2 rounded-lg border border-slate-300 text-sm text-slate-500 hover:bg-slate-50 shrink-0">auto</button>
         </div>
         <span className="block text-xs text-slate-400 mt-1">Auto: Zorg 1.x · Logistiek 2.x · Bodem 3.x{!manualNr && ' (volgt thema)'}</span>
+      </Field>
+      <Field label="Semester">
+        <select className={inputCls} value={f.semester || ''} onChange={e => setF(p => ({ ...p, semester: e.target.value }))} data-gewoon>
+          <option value="">Automatisch (uit start of kick-off)</option>
+          {[...new Set([...SEMESTERS, huidigSemesterNaam(), volgendSemesterNaam(), f.semester].filter(Boolean))].sort((a, b) => semesterVolgorde(b) - semesterVolgorde(a)).map(x => <option key={x} value={x}>{x}</option>)}
+        </select>
       </Field>
       <Field label="Gekoppeld traject">
         <select className={inputCls} value={f.trajectId} onChange={kiesTraject}>
@@ -4280,6 +4311,9 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
   const [impSheet, setImpSheet] = useState('');
   const [impParsed, setImpParsed] = useState(null);
   const [impChecklist, setImpChecklist] = useState(true);
+  const [impSem, setImpSem] = useState('');
+  // semester voor de import: uit de naam van het tabblad ("26-27 sem 1"), anders het gekozen of huidige semester
+  const semVoorTabblad = (naam) => { const x = CGT.parseSemester(naam); return x ? semNaam(semesterVan(x.start)) : ''; };
   const impWbRef = React.useRef(null);
   const impChecklistTab = () => { const wb = impWbRef.current; if (!wb) return ''; return wb.SheetNames.find(n => CGT.isChecklistTabblad(window.XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '', raw: true }))) || ''; };
 
@@ -4288,14 +4322,26 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
   }, [externalDetail]);
 
   const instellingen = useMemo(() => [...new Set(groepen.map(g=>g.onderwijsinstelling).filter(Boolean))].sort(), [groepen]);
-  const cgContacten = useMemo(() => [...new Set(groepen.map(g=>g.contactCG).filter(Boolean))].sort(), [groepen]);
+  const cgContacten = useMemo(() => losseNamen(groepen.map(g => g.contactCG).filter(Boolean), TEAM_NAMEN), [groepen]);
+  const [fSem, setFSemState] = useState(() => loadLS('cgt_groepen_semester', '') || huidigSemesterNaam());
+  const setFSem = v => { setFSemState(v); saveLS('cgt_groepen_semester', v); };
+  const semesterKeuzes = useMemo(() => {
+    const tel = new Map();
+    groepen.forEach(g => { const k = groepSemester(g); tel.set(k, (tel.get(k) || 0) + 1); });
+    [huidigSemesterNaam(), volgendSemesterNaam()].forEach(k => { if (!tel.has(k)) tel.set(k, 0); });
+    if (fSem && fSem !== '*' && fSem !== '-' && !tel.has(fSem)) tel.set(fSem, 0);
+    const zonder = tel.get('') || 0; tel.delete('');
+    return { lijst: [...tel.entries()].map(([naam, n]) => ({ naam, n })).sort((a, b) => semesterVolgorde(b.naam) - semesterVolgorde(a.naam)), zonder };
+  }, [groepen, fSem]);
+  const semGekozen = fSem && fSem !== '*' && fSem !== '-' ? fSem : '';
 
   const filtered = useMemo(() => {
     const q = zoek.trim().toLowerCase();
     return groepen.filter(g => {
       if (fThema && g.thema !== fThema) return false;
       if (fInst && g.onderwijsinstelling !== fInst) return false;
-      if (fCG && g.contactCG !== fCG) return false;
+      if (fCG && !heeftNaam(g.contactCG, fCG)) return false;
+      if (fSem === '-' ? !!groepSemester(g) : (fSem && fSem !== '*' && groepSemester(g) !== fSem)) return false;
       if (q) {
         const blob = [g.groepsnummer,g.thema,g.titel,g.onderwijsinstelling,g.opleiding,g.contactCG,g.docent,
           ...(g.studenten||[]).map(s=>s.naam)].join(' ').toLowerCase();
@@ -4303,7 +4349,7 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
       }
       return true;
     });
-  }, [groepen, zoek, fThema, fInst, fCG]);
+  }, [groepen, zoek, fThema, fInst, fCG, fSem]);
 
   const detail = groepen.find(g => g.id === detailId);
 
@@ -4395,16 +4441,20 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
         const metSem = wb.SheetNames.map(n => ({ n, s: CGT.parseSemester(n) })).filter(x => x.s).sort((a, b) => b.s.start.localeCompare(a.s.start));
         const def = (metSem[0] && metSem[0].n) || wb.SheetNames.find(n => /sem\s*2/i.test(n)) || wb.SheetNames.find(n => /groep/i.test(n)) || wb.SheetNames[0];
         setImpSheet(def);
+        setImpSem(semVoorTabblad(def) || (fSem && fSem !== '*' && fSem !== '-' ? fSem : volgendSemesterNaam()));
         setImpParsed(parseGroepenSheet(def));
         setImpOpen(true);
       } catch (err) { alert('Kon het Excel-bestand niet inlezen: ' + err.message); }
     };
     reader.readAsBinaryString(file);
   }
-  function kiesImpSheet(naam) { setImpSheet(naam); try { setImpParsed(parseGroepenSheet(naam)); } catch (e) { setImpParsed([]); } }
+  function kiesImpSheet(naam) { setImpSheet(naam); const sv = semVoorTabblad(naam); if (sv) setImpSem(sv); try { setImpParsed(parseGroepenSheet(naam)); } catch (e) { setImpParsed([]); } }
   function bevestigGroepImport(vervang, samenvoegen) {
-    const g2 = impParsed || [];
+    const g2 = (impParsed || []).map(g => ({ ...g, semester: impSem || g.semester || '' }));
     if (!g2.length) return;
+    // alleen groepen van hetzelfde semester samenvoegen of vervangen; andere semesters blijven ongemoeid
+    const sem = impSem;
+    const zelfdeSem = groepen.filter(g => groepSemester(g) === sem), andereSem = groepen.filter(g => groepSemester(g) !== sem);
     // groepen waarvan het traject (nog) niet bestaat → maak een GEARCHIVEERD traject en koppel
     const bestaand = new Map(trajecten.filter(t => t.titel).map(t => [normaliseerOrg(t.titel), t.id]));
     const nieuweTraj = [];
@@ -4421,11 +4471,12 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
     // samenvoegen: bestaande groepen (zelfde thema en nummer) bijwerken, taken en vinkjes blijven staan
     let doel = g2, bericht = '';
     if (samenvoegen) {
-      const r = CGT.voegImportSamen(groepen, g2);
+      const r = CGT.voegImportSamen(zelfdeSem, g2);
       doel = r.groepen.filter(g => [...r.koppel.values()].includes(g.id));
-      setGroepen(r.groepen);
+      setGroepen([...andereSem, ...r.groepen]);
       bericht = `${r.bijgewerkt} groep(en) bijgewerkt, ${r.nieuw} nieuw.`;
-    } else setGroepen(prev => vervang ? g2 : [...prev, ...g2]);
+    } else setGroepen(prev => vervang ? [...prev.filter(g => groepSemester(g) !== sem), ...g2] : [...prev, ...g2]);
+    if (sem) setFSem(sem);
     // vinkjes uit het tabblad "Checklist projectleiders": alleen lege punten aanvullen
     const tab = impChecklistTab();
     if (impChecklist && tab && setChecklist) {
@@ -4528,7 +4579,7 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
           onOpenTraject={onOpenTraject} />
         <Modal open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} title="Studentengroep bewerken" wide>
           <AndereWijziging origineel={editing} huidig={editing && groepen.find(x => x.id === editing.id)} wat="deze groep" />
-          <GroepForm initial={editing || leegGroep()} trajecten={trajecten} contacten={contacten} groepen={groepen} onSave={saveGroep} onCancel={() => { setFormOpen(false); setEditing(null); }} />
+          <GroepForm initial={editing || { ...leegGroep(), semester: semGekozen || huidigSemesterNaam() }} trajecten={trajecten} contacten={contacten} groepen={groepen} onSave={saveGroep} onCancel={() => { setFormOpen(false); setEditing(null); }} />
         </Modal>
       </div>
     );
@@ -4546,6 +4597,11 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
         <button onClick={() => { setEditing(leegGroep()); setFormOpen(true); }} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">+ Nieuwe groep</button>
       </div>
       <div className="flex flex-wrap gap-2 mb-4 items-center">
+        <select value={fSem} onChange={e => setFSem(e.target.value)} aria-label="Semester" className="border-2 border-brand/60 rounded-lg px-2 py-1.5 text-sm font-semibold text-ink">
+          {semesterKeuzes.lijst.map(x => <option key={x.naam} value={x.naam}>{x.naam}{x.naam === huidigSemesterNaam() ? ' (nu)' : x.naam === volgendSemesterNaam() ? ' (volgend)' : ''} · {x.n} groep{x.n === 1 ? '' : 'en'}</option>)}
+          {semesterKeuzes.zonder > 0 && <option value="-">Zonder semester · {semesterKeuzes.zonder}</option>}
+          <option value="*">Alle semesters · {groepen.length}</option>
+        </select>
         <select value={fThema} onChange={e=>setFThema(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
           <option value="">Alle thema's</option>{THEMAS.map(x=><option key={x}>{x}</option>)}
         </select>
@@ -4555,6 +4611,11 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
         <select value={fCG} onChange={e=>setFCG(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
           <option value="">Alle CG-contacten</option>{cgContacten.map(x=><option key={x}>{x}</option>)}
         </select>
+        {semGekozen && !groepen.some(g => groepSemester(g) === semGekozen) && (
+          <div className="basis-full rounded-lg border border-brandlight bg-brandlight/30 px-3 py-2 text-sm text-branddark">
+            Nog geen groepen in <strong>{semGekozen}</strong>. Nieuw semester? Importeer het studentenoverzicht met <strong>Excel-import</strong> of voeg groepen toe met <strong>+ Nieuwe groep</strong>. De groepen van eerdere semesters blijven bewaard; kies ze hierboven bij het semester.
+          </div>
+        )}
         <button onClick={() => { setZoek(''); setFThema(''); setFInst(''); setFCG(''); }} className="text-sm text-slate-500 hover:text-slate-700 underline">Wissen</button>
         <span className="text-sm text-slate-400 ml-auto">{filtered.length} van {groepen.length}</span>
       </div>
@@ -4593,7 +4654,7 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
 
       <Modal open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} title={editing && groepen.some(g=>g.id===editing.id) ? 'Studentengroep bewerken' : 'Nieuwe studentengroep'} wide>
         <AndereWijziging origineel={editing} huidig={editing && groepen.find(x => x.id === editing.id)} wat="deze groep" />
-          <GroepForm initial={editing || leegGroep()} trajecten={trajecten} contacten={contacten} groepen={groepen} onSave={saveGroep} onCancel={() => { setFormOpen(false); setEditing(null); }} />
+          <GroepForm initial={editing || { ...leegGroep(), semester: semGekozen || huidigSemesterNaam() }} trajecten={trajecten} contacten={contacten} groepen={groepen} onSave={saveGroep} onCancel={() => { setFormOpen(false); setEditing(null); }} />
       </Modal>
 
       <Modal open={impOpen} onClose={() => { setImpOpen(false); setImpParsed(null); impWbRef.current = null; }} title="Studentengroepen importeren">
@@ -4602,6 +4663,12 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
             <select className={inputCls} value={impSheet} onChange={e => kiesImpSheet(e.target.value)}>
               {impSheets.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
+          </Field>
+          <Field label="Voor welk semester?">
+            <select className={inputCls} value={impSem} onChange={e => setImpSem(e.target.value)} data-gewoon>
+              {[...new Set([...SEMESTERS, huidigSemesterNaam(), volgendSemesterNaam(), impSem].filter(Boolean))].sort((a, b) => semesterVolgorde(b) - semesterVolgorde(a)).map(x => <option key={x} value={x}>{x}</option>)}
+            </select>
+            <span className="block text-xs text-slate-500 mt-1">De groepen komen in dit semester. Groepen van andere semesters blijven staan en worden niet overschreven{groepen.some(g => groepSemester(g) === impSem) ? <>; er staan al {groepen.filter(g => groepSemester(g) === impSem).length} groepen in {impSem}</> : null}.</span>
           </Field>
           <div className="bg-brandlight/50 border border-brand/20 rounded-lg p-3 text-sm">
             <strong>{(impParsed || []).length} groep(en)</strong> herkend{impParsed ? ` · ${impParsed.reduce((n,g)=>n+g.studenten.length,0)} studenten` : ''}.
@@ -4631,7 +4698,7 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
             <button onClick={() => { setImpOpen(false); setImpParsed(null); }} className="px-4 py-2 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">Annuleren</button>
             <button onClick={() => bevestigGroepImport(false, true)} disabled={!(impParsed||[]).length} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark disabled:opacity-40" title="Bestaande groepen met hetzelfde thema en nummer bijwerken; taken, opvolging en vinkjes blijven staan">Bijwerken en aanvullen</button>
             <button onClick={() => bevestigGroepImport(false)} disabled={!(impParsed||[]).length} className="px-4 py-2 rounded-lg border border-slate-300 text-sm hover:bg-slate-50 disabled:opacity-40">Toevoegen aan bestaande</button>
-            <button onClick={() => { if (confirm('Alle huidige groepen vervangen door de import?')) bevestigGroepImport(true); }} disabled={!(impParsed||[]).length} className="px-4 py-2 rounded-lg border border-rose-300 text-rose-600 text-sm hover:bg-rose-50 disabled:opacity-40">Vervang alle groepen</button>
+            <button onClick={() => { if (confirm('Alle groepen van ' + (impSem || 'dit semester') + ' vervangen door de import? Groepen van andere semesters blijven staan.')) bevestigGroepImport(true); }} disabled={!(impParsed||[]).length} className="px-4 py-2 rounded-lg border border-rose-300 text-rose-600 text-sm hover:bg-rose-50 disabled:opacity-40">Vervang groepen van dit semester</button>
           </div>
         </div>
       </Modal>
