@@ -677,7 +677,7 @@ function TrajectForm({ initial, contacten = [], onCreateContact, onSave, onCance
       </Field>
       <Field label="Semester(s) — een traject kan in meerdere semesters vallen" full>
         <div className="flex flex-wrap gap-x-4 gap-y-1 border border-slate-200 rounded-lg p-2">
-          {SEMESTERS.map(sem => {
+          {[...new Set([...SEMESTERS, huidigSemesterNaam(), volgendSemesterNaam(), ...(f.semesters || [])])].sort((a, b) => semesterVolgorde(a) - semesterVolgorde(b)).map(sem => {
             const checked = (f.semesters || []).includes(sem);
             return (
               <label key={sem} className="flex items-center gap-1.5 text-sm cursor-pointer">
@@ -812,7 +812,7 @@ function TrajectDetail({ traject, contacten, groepen = [], onOpenGroep, onToggle
             <div className="text-slate-500 font-medium">Semester(s)</div>
             <div className="col-span-2 flex flex-wrap gap-1">
               {(t.semesters||[]).map((s,i)=><Badge key={i} className="bg-regio/10 text-regio border-regio/30">{s}</Badge>)}
-              {(t.semesters||[]).length===0 && <span className="text-slate-300">—</span>}
+              {(t.semesters||[]).length===0 && <Badge className="bg-amber-50 text-amber-800 border-amber-200">geen semester: staat bij het huidige semester</Badge>}
             </div>
           </div>
           <div className="py-2 grid grid-cols-3 gap-2 text-sm">
@@ -883,7 +883,7 @@ function TrajectDetail({ traject, contacten, groepen = [], onOpenGroep, onToggle
 /* ============================================================
    TRAJECTEN-TAB
    ============================================================ */
-function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCreateContact, onOpenContact, onOpenGroep, externalDetail, clearExternal }) {
+function TrajectenTab({ periode = '*', trajecten, setTrajecten, contacten, groepen = [], onCreateContact, onOpenContact, onOpenGroep, externalDetail, clearExternal }) {
   const [view, setView] = useState('lijst'); // lijst | kanban
   const [detailId, setDetailId] = useState(null);
   const [dragId, setDragId] = useState(null);       // traject dat gesleept wordt
@@ -910,7 +910,6 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
   const [fCollega, setFCollega] = useState('');
   const [fDefinitief, setFDefinitief] = useState('');
   const [fStatus, setFStatus] = useState('');
-  const [fSemester, setFSemester] = useState('');
   const [fArchief, setFArchief] = useState('actief'); // actief | gearchiveerd | alle
 
   const contactById = useMemo(() => Object.fromEntries(contacten.map(c => [c.id, c])), [contacten]);
@@ -942,14 +941,14 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
       if (fContact && !trajectContactNamen(t).some(n => heeftNaam(n, fContact))) return false;
       if (fCollega && !heeftNaam(t.senior, fCollega) && !heeftNaam(t.junior, fCollega)) return false;
       if (fOpleiding && !tagList(t.opleidingen).includes(fOpleiding)) return false;
-      if (fSemester && !(t.semesters || []).includes(fSemester)) return false;
+      if (!trajectInPeriode(t, periode)) return false;
       if (q) {
         const blob = Object.values(t).join(' ').toLowerCase();
         if (!blob.includes(q)) return false;
       }
       return true;
     });
-  }, [trajecten, zoek, fThema, fOpleiding, fContact, fCollega, fDefinitief, fStatus, fSemester, fArchief, contactById]);
+  }, [trajecten, zoek, fThema, fOpleiding, fContact, fCollega, fDefinitief, fStatus, periode, fArchief, contactById]);
 
   const detail = trajecten.find(t => t.id === detailId);
 
@@ -999,7 +998,7 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
     downloadCSV(rows, 'campus-gouda-trajecten.csv');
   }
   function resetFilters() {
-    setZoek(''); setFThema(''); setFOpleiding(''); setFContact(''); setFCollega(''); setFDefinitief(''); setFStatus(''); setFSemester(''); setFArchief('actief');
+    setZoek(''); setFThema(''); setFOpleiding(''); setFContact(''); setFCollega(''); setFDefinitief(''); setFStatus(''); setFArchief('actief');
   }
 
   // Werving-uitdraai openen: standaard alle nu-gefilterde trajecten geselecteerd
@@ -1217,15 +1216,12 @@ function TrajectenTab({ trajecten, setTrajecten, contacten, groepen = [], onCrea
         <button onClick={exportCSV} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">CSV-export</button>
         <button onClick={() => { setImportParsed(null); setImportOpen(true); }} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-50" title="Importeer trajecten uit een Excel-bestand (Leads/Overzicht)">Excel-import</button>
         <button onClick={openWerving} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-50" title="Maak een partner-uitdraai van geselecteerde trajecten">Werving-uitdraai</button>
-        <button onClick={() => { setEditing(leegTraject()); setFormOpen(true); }}
+        <button onClick={() => { setEditing({ ...leegTraject(), semesters: allePeriodes(periode) ? [] : [periode] }); setFormOpen(true); }}
           className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">+ Nieuw traject</button>
       </div>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-4 items-center">
-        <select value={fSemester} onChange={e=>setFSemester(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm font-medium text-ink" title="Toon trajecten in dit semester">
-          <option value="">Alle semesters</option>{SEMESTERS.map(x=><option key={x}>{x}</option>)}
-        </select>
         <select value={fArchief} onChange={e=>setFArchief(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm" title="Toon actieve of gearchiveerde trajecten">
           <option value="actief">Actief</option>
           <option value="gearchiveerd">Gearchiveerd</option>
@@ -3175,7 +3171,7 @@ function Kop({ titel, sub, rechts }) {
 /* ============================================================
    TABBLAD TAKEN: wat moet er gebeuren?
    ============================================================ */
-function TakenTab({ groepen, setGroepen, checklist, onOpenGroep, contacten = [], setContacten, onOpenContact, welkomFoto = '' }) {
+function TakenTab({ groepen, alleGroepen = null, setGroepen, checklist, onOpenGroep, contacten = [], setContacten, onOpenContact, welkomFoto = '' }) {
   const verlopenContacten = useMemo(() => (contacten || []).filter(c => bewaarVerlopen(c)).sort((a, b) => bewaarDatum(a).localeCompare(bewaarDatum(b))), [contacten]);
   const behoudContact = (id) => setContacten && setContacten(prev => prev.map(x => x.id === id ? { ...x, bewaarCheck: CGT.vandaagISO() } : x));
   const verwijderContact = (c) => {
@@ -3185,7 +3181,8 @@ function TakenTab({ groepen, setGroepen, checklist, onOpenGroep, contacten = [],
   };
   const [naam, setNaam] = useState(() => mijnNaam());
   const ikNaam = teamNaamVoor(naam || mijnNaam(), TEAM_NAMEN) || String(naam || mijnNaam() || '').trim();
-  const voorJou = useMemo(() => voorJouVan(groepen, ikNaam), [groepen, ikNaam]);
+  // berichten en toewijzingen voor jou nooit wegfilteren, ook niet uit een andere periode
+  const voorJou = useMemo(() => voorJouVan(alleGroepen || groepen, ikNaam), [alleGroepen, groepen, ikNaam]);
   const markeerGezien = (x) => setGroepen(prev => prev.map(g => {
     if (g.id !== x.g.id) return g;
     if (x.soort === 'bericht') return { ...g, berichten: (g.berichten || []).map(b => b.id === x.b.id ? { ...b, gezien: { ...(b.gezien || {}), [ikNaam]: new Date().toISOString() } } : b) };
@@ -3657,6 +3654,43 @@ function groepSemester(g) {
 const huidigSemesterNaam = () => semNaam(semesterVan(CGT.vandaagISO()));
 const volgendSemesterNaam = () => semNaam(semVolgende(semesterVan(CGT.vandaagISO())));
 const semesterVolgorde = n => { const m = String(n || '').match(/Semester\s*(\d)\s*(\d{4})/); return m ? +m[2] * 10 + +m[1] : 0; };
+// Werkperiode: één keuze voor de hele app, per persoon. Bij het openen van de app start je in het huidige semester.
+// '*' = alle periodes. Iets zonder semester telt als het huidige semester, zodat het niet verdwijnt maar ook niet overal staat.
+const SS_PERIODE = 'cgt_werkperiode';
+function beginPeriode() { try { return sessionStorage.getItem(SS_PERIODE) || huidigSemesterNaam(); } catch (e) { return huidigSemesterNaam(); } }
+const allePeriodes = p => !p || p === '*';
+const inWerkperiode = (sem, p) => allePeriodes(p) || (sem ? sem === p : p === huidigSemesterNaam());
+const trajectInPeriode = (t, p) => allePeriodes(p) || ((t.semesters || []).length ? t.semesters.includes(p) : p === huidigSemesterNaam());
+function periodeKeuzesVan(groepen, trajecten) {
+  const h = semesterVolgorde(huidigSemesterNaam());
+  const tel = new Map();
+  const plus = (naam, veld) => { if (!naam) return; const v = semesterVolgorde(naam); if (!v || v < h - 100 || v > h + 21) return; const x = tel.get(naam) || { groepen: 0, trajecten: 0 }; if (veld) x[veld]++; tel.set(naam, x); };
+  [huidigSemesterNaam(), volgendSemesterNaam()].forEach(n => plus(n));
+  groepen.forEach(g => plus(groepSemester(g) || huidigSemesterNaam(), 'groepen'));
+  trajecten.forEach(t => ((t.semesters || []).length ? t.semesters : [huidigSemesterNaam()]).forEach(n => plus(n, 'trajecten')));
+  return [...tel].map(([naam, x]) => ({ naam, ...x })).sort((a, b) => semesterVolgorde(b.naam) - semesterVolgorde(a.naam));
+}
+function PeriodeBalk({ periode, zetPeriode, groepen, trajecten }) {
+  const keuzes = useMemo(() => periodeKeuzesVan(groepen, trajecten), [groepen, trajecten]);
+  const nu = huidigSemesterNaam();
+  const isNu = periode === nu;
+  const tijd = allePeriodes(periode) ? '' : semesterVolgorde(periode) < semesterVolgorde(nu) ? ' (afgelopen)' : semesterVolgorde(periode) > semesterVolgorde(nu) ? ' (komend)' : '';
+  return (
+    <div className={'border-b ' + (isNu ? 'bg-white border-slate-200' : 'bg-amber-50 border-amber-200')}>
+      <div className="max-w-7xl mx-auto px-4 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        <label htmlFor="werkperiode" className="font-medium text-ink">📅 Periode</label>
+        <select id="werkperiode" value={periode} onChange={e => zetPeriode(e.target.value)}
+          className={'max-w-full min-w-0 rounded-lg px-2 py-1 text-sm font-semibold text-ink border-2 ' + (isNu ? 'border-brand/60' : 'border-amber-400')}>
+          {keuzes.map(x => <option key={x.naam} value={x.naam}>{x.naam}{x.naam === nu ? ' (nu)' : x.naam === volgendSemesterNaam() ? ' (volgend)' : ''} · {x.trajecten} traject{x.trajecten === 1 ? '' : 'en'}, {x.groepen} groep{x.groepen === 1 ? '' : 'en'}</option>)}
+          <option value="*">Alle periodes</option>
+        </select>
+        {!isNu && <span className="text-amber-900">{allePeriodes(periode) ? 'Je ziet alles, ook vorige jaren.' : <>Je bekijkt <strong>{periode}</strong>{tijd}.</>}</span>}
+        {!isNu && <button type="button" onClick={() => zetPeriode(nu)} className="px-2 py-0.5 rounded-md border border-amber-300 text-amber-900 text-xs hover:bg-amber-100">Terug naar nu</button>}
+        <span className="text-xs text-slate-400 ml-auto">Geldt voor Taken, Trajecten, Studentengroepen en Cijfers · Contacten tonen altijd alles</span>
+      </div>
+    </div>
+  );
+}
 // unieke losse namen uit velden als "naam1/naam2" of "naam1, naam2"
 function losseNamen(waarden, extra) {
   const m = new Map();
@@ -4296,7 +4330,7 @@ function GroepLijstKolommen({ g, state }) {
   </>);
 }
 
-function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, contacten, checklist = {}, setChecklist, externalDetail, clearExternalDetail, onOpenTraject, terugNaarTaken }) {
+function StudentenGroepenTab({ periode = '*', zetPeriode = () => {}, groepen, setGroepen, trajecten, setTrajecten, contacten, checklist = {}, setChecklist, externalDetail, clearExternalDetail, onOpenTraject, terugNaarTaken }) {
   const [detailId, setDetailId] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -4323,8 +4357,7 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
 
   const instellingen = useMemo(() => [...new Set(groepen.map(g=>g.onderwijsinstelling).filter(Boolean))].sort(), [groepen]);
   const cgContacten = useMemo(() => losseNamen(groepen.map(g => g.contactCG).filter(Boolean), TEAM_NAMEN), [groepen]);
-  const [fSem, setFSemState] = useState(() => loadLS('cgt_groepen_semester', '') || huidigSemesterNaam());
-  const setFSem = v => { setFSemState(v); saveLS('cgt_groepen_semester', v); };
+  const fSem = periode, setFSem = zetPeriode;
   const semesterKeuzes = useMemo(() => {
     const tel = new Map();
     groepen.forEach(g => { const k = groepSemester(g); tel.set(k, (tel.get(k) || 0) + 1); });
@@ -4341,7 +4374,7 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
       if (fThema && g.thema !== fThema) return false;
       if (fInst && g.onderwijsinstelling !== fInst) return false;
       if (fCG && !heeftNaam(g.contactCG, fCG)) return false;
-      if (fSem === '-' ? !!groepSemester(g) : (fSem && fSem !== '*' && groepSemester(g) !== fSem)) return false;
+      if (!inWerkperiode(groepSemester(g), fSem)) return false;
       if (q) {
         const blob = [g.groepsnummer,g.thema,g.titel,g.onderwijsinstelling,g.opleiding,g.contactCG,g.docent,
           ...(g.studenten||[]).map(s=>s.naam)].join(' ').toLowerCase();
@@ -4594,14 +4627,9 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
         <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleImportExcel} className="hidden" />
         <button onClick={exportExcelSchoon} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-50" title="Schone tabel voor Power BI: één rij per student, Thema-kolom">Exporteer naar Excel</button>
         <button onClick={exportExcelSpiegel} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm text-slate-500 hover:bg-slate-50" title="Originele lay-out: groepsgegevens op eerste rij, thema's als tussenkopjes">Originele lay-out</button>
-        <button onClick={() => { setEditing(leegGroep()); setFormOpen(true); }} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">+ Nieuwe groep</button>
+        <button onClick={() => { setEditing({ ...leegGroep(), semester: semGekozen || huidigSemesterNaam() }); setFormOpen(true); }} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">+ Nieuwe groep</button>
       </div>
       <div className="flex flex-wrap gap-2 mb-4 items-center">
-        <select value={fSem} onChange={e => setFSem(e.target.value)} aria-label="Semester" className="border-2 border-brand/60 rounded-lg px-2 py-1.5 text-sm font-semibold text-ink">
-          {semesterKeuzes.lijst.map(x => <option key={x.naam} value={x.naam}>{x.naam}{x.naam === huidigSemesterNaam() ? ' (nu)' : x.naam === volgendSemesterNaam() ? ' (volgend)' : ''} · {x.n} groep{x.n === 1 ? '' : 'en'}</option>)}
-          {semesterKeuzes.zonder > 0 && <option value="-">Zonder semester · {semesterKeuzes.zonder}</option>}
-          <option value="*">Alle semesters · {groepen.length}</option>
-        </select>
         <select value={fThema} onChange={e=>setFThema(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
           <option value="">Alle thema's</option>{THEMAS.map(x=><option key={x}>{x}</option>)}
         </select>
@@ -4611,6 +4639,18 @@ function StudentenGroepenTab({ groepen, setGroepen, trajecten, setTrajecten, con
         <select value={fCG} onChange={e=>setFCG(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
           <option value="">Alle CG-contacten</option>{cgContacten.map(x=><option key={x}>{x}</option>)}
         </select>
+        {(() => {
+          const zonder = filtered.filter(g => !groepSemester(g));
+          if (!zonder.length) return null;
+          const doel = semGekozen || huidigSemesterNaam();
+          return (
+            <div className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 flex flex-wrap items-center gap-2">
+              <span className="flex-1 min-w-[240px]">{zonder.length} groep{zonder.length === 1 ? '' : 'en'} in deze lijst {zonder.length === 1 ? 'heeft' : 'hebben'} nog geen semester en geen datum. Die staan voorlopig bij het huidige semester.</span>
+              <button type="button" onClick={() => { if (confirm(zonder.length + ' groep(en) in ' + doel + ' zetten? Je kunt het semester per groep later nog aanpassen.')) setGroepen(prev => prev.map(g => zonder.some(z => z.id === g.id) ? { ...g, semester: doel } : g)); }}
+                className="px-2 py-1 rounded-md border border-amber-300 text-xs font-medium hover:bg-amber-100">Zet ze in {doel}</button>
+            </div>
+          );
+        })()}
         {semGekozen && !groepen.some(g => groepSemester(g) === semGekozen) && (
           <div className="basis-full rounded-lg border border-brandlight bg-brandlight/30 px-3 py-2 text-sm text-branddark">
             Nog geen groepen in <strong>{semGekozen}</strong>. Nieuw semester? Importeer het studentenoverzicht met <strong>Excel-import</strong> of voeg groepen toe met <strong>+ Nieuwe groep</strong>. De groepen van eerdere semesters blijven bewaard; kies ze hierboven bij het semester.
@@ -5087,12 +5127,14 @@ function kopieerTabel(titel, kolommen, rijen) {
   try { navigator.clipboard.writeText(tekst); } catch (e) { window.prompt('Kopieer de tabel:', tekst); }
 }
 
-function CijfersOverzicht({ trajecten, contacten, groepen, uren }) {
+function CijfersOverzicht({ trajecten, contacten, groepen, uren, werkperiode = '' }) {
   const vandaag = CGT.vandaagISO();
   const huidig = semesterVan(vandaag);
   const [periode, setPeriode] = useState(() => loadLS(LS_CIJFER_PERIODE, { j: huidig.j, s: 0 }) || { j: huidig.j, s: 0 });
   const zetPeriode = p => { setPeriode(p); saveLS(LS_CIJFER_PERIODE, p); };
   useEffect(() => { if (periode.j && (periode.j < huidig.j - 10 || periode.j > huidig.j + 2)) zetPeriode({ j: huidig.j, s: 0 }); }, []);
+  // de periode bovenin bepaalt waar Cijfers mee begint; hier kun je daarna nog breder kijken (heel schooljaar)
+  useEffect(() => { const m = String(werkperiode || '').match(/Semester\s*(\d)\s*(\d{4})/); if (m) zetPeriode({ j: +m[2], s: +m[1] }); }, [werkperiode]);
   const [blokken, setBlokken] = useState(() => {
     const opgeslagen = loadLS(LS_CIJFER_BLOKKEN, null) || [];
     const bekend = new Set(opgeslagen.map(b => b.id));
@@ -5786,11 +5828,14 @@ function App() {
     return c.id;
   }
 
+  const [periode, setPeriodeState] = useState(beginPeriode);
+  const zetPeriode = p => { setPeriodeState(p); try { sessionStorage.setItem(SS_PERIODE, p); } catch (e) {} };
+  const groepenP = useMemo(() => groepen.filter(g => inWerkperiode(groepSemester(g), periode)), [groepen, periode]);
   const takenTeller = useMemo(() => {
-    const o = CGT.takenOverzicht(groepen, checklist, CGT.vandaagISO());
+    const o = CGT.takenOverzicht(groepenP, checklist, CGT.vandaagISO());
     const ik = teamNaamVoor(mijnNaam(), TEAM_NAMEN) || mijnNaam();
     return o.opvolgen.length + o.signalen.filter(x => !x.verborgen && (x.niveau === 'urgent' || x.niveau === 'binnenkort')).length + voorJouVan(groepen, ik).length;
-  }, [groepen, checklist, team]);
+  }, [groepen, groepenP, checklist, team]);
   const [vanTaken, setVanTaken] = useState(false);
   // tabblad Cijfers: Overzicht of Uren partners (per computer onthouden); "bekijk in uren" springt naar Uren partners
   const [cijferDeel, setCijferDeel] = useState(() => loadLS('cgt_cijfers_deel', 'overzicht') || 'overzicht');
@@ -5914,6 +5959,7 @@ function App() {
           </div>
         </div>
       </header>
+      <PeriodeBalk periode={periode} zetPeriode={zetPeriode} groepen={groepen} trajecten={trajecten} />
 
       {syncStatus === 'niet-gekoppeld' && (
         <div className="bg-amber-50 border-b border-amber-200 text-amber-900">
@@ -5950,12 +5996,12 @@ function App() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
         {tab === 'taken' && (
-          <TakenTab groepen={groepen} setGroepen={setGroepen} checklist={checklist} onOpenGroep={openGroepFromTaken}
+          <TakenTab groepen={groepenP} alleGroepen={groepen} setGroepen={setGroepen} checklist={checklist} onOpenGroep={openGroepFromTaken}
             contacten={contacten} setContacten={setContactenMetUren} onOpenContact={(id) => { setTab('contacten'); setOpenContactId(id); }} welkomFoto={welkomFoto} />
         )}
         {tab === 'trajecten' && (
           <TrajectenTab
-            trajecten={trajecten} setTrajecten={setTrajecten} contacten={contacten}
+            trajecten={trajecten} setTrajecten={setTrajecten} contacten={contacten} periode={periode}
             groepen={groepen} onCreateContact={createContact}
             onOpenContact={openContactFromTraject} onOpenGroep={openGroepFromTraject}
             externalDetail={pendingTrajectId} clearExternal={() => setPendingTrajectId(null)}
@@ -5964,6 +6010,7 @@ function App() {
         {tab === 'groepen' && (
           <StudentenGroepenTab
             groepen={groepen} setGroepen={setGroepen} trajecten={trajecten} setTrajecten={setTrajecten} contacten={contacten}
+            periode={periode} zetPeriode={zetPeriode}
             checklist={checklist} setChecklist={setChecklist}
             externalDetail={pendingGroepId} clearExternalDetail={() => setPendingGroepId(null)}
             onOpenTraject={openTrajectFromGroep}
@@ -5987,7 +6034,7 @@ function App() {
           </div>
         )}
         {tab === 'uren' && cijferDeel === 'overzicht' && (
-          <CijfersOverzicht trajecten={trajecten} contacten={contacten} groepen={groepen} uren={urenAlles} />
+          <CijfersOverzicht trajecten={trajecten} contacten={contacten} groepen={groepen} uren={urenAlles} werkperiode={periode} />
         )}
         {tab === 'uren' && cijferDeel === 'uren' && (
           <UrenTab

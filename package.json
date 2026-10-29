@@ -1,6 +1,6 @@
 {
   "name": "campus-gouda-crm",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "private": true,
   "description": "Campus Gouda CRM als installeerbare web-app. Bevat geen gegevens: die staan in de gedeelde SharePoint-map.",
   "scripts": {
