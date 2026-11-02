@@ -883,7 +883,7 @@ function TrajectDetail({ traject, contacten, groepen = [], onOpenGroep, onToggle
 /* ============================================================
    TRAJECTEN-TAB
    ============================================================ */
-function TrajectenTab({ periode = '*', trajecten, setTrajecten, contacten, groepen = [], onCreateContact, onOpenContact, onOpenGroep, externalDetail, clearExternal }) {
+function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, contacten, groepen = [], onCreateContact, onOpenContact, onOpenGroep, externalDetail, clearExternal }) {
   const [view, setView] = useState('lijst'); // lijst | kanban
   const [detailId, setDetailId] = useState(null);
   const [dragId, setDragId] = useState(null);       // traject dat gesleept wordt
@@ -930,6 +930,8 @@ function TrajectenTab({ periode = '*', trajecten, setTrajecten, contacten, groep
     return losseNamen([...set]);
   }, [trajecten, contactById]);
 
+  // ook "van mij": trajecten waar ik bij een studentengroep senior of junior ben
+  const mijnTrajectIds = useMemo(() => new Set(mijn ? groepen.filter(g => g.trajectId && groepVanMij(g, mijn)).map(g => g.trajectId) : []), [groepen, mijn]);
   const filtered = useMemo(() => {
     const q = zoek.trim().toLowerCase();
     return trajecten.filter(t => {
@@ -942,13 +944,14 @@ function TrajectenTab({ periode = '*', trajecten, setTrajecten, contacten, groep
       if (fCollega && !heeftNaam(t.senior, fCollega) && !heeftNaam(t.junior, fCollega)) return false;
       if (fOpleiding && !tagList(t.opleidingen).includes(fOpleiding)) return false;
       if (!trajectInPeriode(t, periode)) return false;
+      if (mijn && !trajectVanMij(t, mijn) && !mijnTrajectIds.has(t.id)) return false;
       if (q) {
         const blob = Object.values(t).join(' ').toLowerCase();
         if (!blob.includes(q)) return false;
       }
       return true;
     });
-  }, [trajecten, zoek, fThema, fOpleiding, fContact, fCollega, fDefinitief, fStatus, periode, fArchief, contactById]);
+  }, [trajecten, zoek, fThema, fOpleiding, fContact, fCollega, fDefinitief, fStatus, periode, fArchief, contactById, mijn, mijnTrajectIds]);
 
   const detail = trajecten.find(t => t.id === detailId);
 
@@ -1929,7 +1932,7 @@ function StatCard({ label, value, sub, accent }) {
   );
 }
 
-function ContactenTab({ contacten, setContacten, trajecten, uren = [], openContactId, setOpenContactId, pendingNewContact, clearPendingNewContact, onOpenTraject, onOpenUrenOrg }) {
+function ContactenTab({ mijn = '', contacten, setContacten, trajecten, uren = [], openContactId, setOpenContactId, pendingNewContact, clearPendingNewContact, onOpenTraject, onOpenUrenOrg }) {
   const [detailId, setDetailId] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -1981,6 +1984,7 @@ function ContactenTab({ contacten, setContacten, trajecten, uren = [], openConta
     return contacten.filter(c => {
       if (fStatus && (c.leadstatus || 'Koud') !== fStatus) return false;
       if (fEigenaar && c.eigenaar !== fEigenaar) return false;
+      if (mijn && !contactVanMij(c, mijn)) return false;
       if (fThema && !contactThemas(c).includes(fThema)) return false;
       if (fType && (c.typeExtern || '') !== (fType === '(leeg)' ? '' : fType)) return false;
       if (fRegio && (fRegio === 'Midden-Holland' ? regioVanContact(c) !== 'Midden-Holland' : regioVanContact(c) === 'Midden-Holland')) return false;
@@ -1992,7 +1996,7 @@ function ContactenTab({ contacten, setContacten, trajecten, uren = [], openConta
       }
       return true;
     });
-  }, [contacten, zoek, fStatus, fEigenaar, fThema, fType, fRegio, fKans, fGesprek, trajById]);
+  }, [contacten, zoek, fStatus, fEigenaar, fThema, fType, fRegio, fKans, fGesprek, trajById, mijn]);
 
   // statistieken (over alle contacten)
   const stats = useMemo(() => {
@@ -3171,7 +3175,7 @@ function Kop({ titel, sub, rechts }) {
 /* ============================================================
    TABBLAD TAKEN: wat moet er gebeuren?
    ============================================================ */
-function TakenTab({ groepen, alleGroepen = null, setGroepen, checklist, onOpenGroep, contacten = [], setContacten, onOpenContact, welkomFoto = '' }) {
+function TakenTab({ groepen, alleGroepen = null, alleenMijn = false, zetAlleenMijn = () => {}, setGroepen, checklist, onOpenGroep, contacten = [], setContacten, onOpenContact, welkomFoto = '' }) {
   const verlopenContacten = useMemo(() => (contacten || []).filter(c => bewaarVerlopen(c)).sort((a, b) => bewaarDatum(a).localeCompare(bewaarDatum(b))), [contacten]);
   const behoudContact = (id) => setContacten && setContacten(prev => prev.map(x => x.id === id ? { ...x, bewaarCheck: CGT.vandaagISO() } : x));
   const verwijderContact = (c) => {
@@ -3188,15 +3192,13 @@ function TakenTab({ groepen, alleGroepen = null, setGroepen, checklist, onOpenGr
     if (x.soort === 'bericht') return { ...g, berichten: (g.berichten || []).map(b => b.id === x.b.id ? { ...b, gezien: { ...(b.gezien || {}), [ikNaam]: new Date().toISOString() } } : b) };
     return { ...g, taken: CGT.takenVan(g).map(t => t.id === x.t.id ? { ...t, gezienDoorVoor: true } : t) };
   }));
-  const [alleenMijn, setAlleenMijn] = useState(() => !!loadLS(LS_ALLEENMIJN, false));
   const [toonOverig, setToonOverig] = useState(false);
   const [toonKlaar, setToonKlaar] = useState(false);
   const [modal, setModal] = useState(null);
   useEffect(() => saveLS(LS_MIJNNAAM, naam), [naam]);
-  useEffect(() => saveLS(LS_ALLEENMIJN, alleenMijn), [alleenMijn]);
   const acties = useGroepActies(setGroepen);
   const vandaag = CGT.vandaagISO();
-  const mijn = g => !alleenMijn || !naam.trim() || CGT.norm(g.contactCG).includes(CGT.norm(naam));
+  const mijn = g => !alleenMijn || !ikNaam || groepVanMij(g, ikNaam);
   const o = useMemo(() => CGT.takenOverzicht(groepen.filter(mijn), checklist, vandaag), [groepen, checklist, alleenMijn, naam]);
   const zichtbaar = o.signalen.filter(s => !s.verborgen);
   const hoofd = zichtbaar.filter(s => HOOFDNIVEAUS.includes(s.niveau));
@@ -3231,7 +3233,7 @@ function TakenTab({ groepen, alleGroepen = null, setGroepen, checklist, onOpenGr
         <div className="text-sm text-slate-500">Taken: alles wat er voor de studentengroepen moet gebeuren</div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <input value={naam} onChange={e => setNaam(e.target.value)} list="cg-team" placeholder="Jouw naam (zoals bij Contact CG)" className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-56" />
-          <label className="flex items-center gap-1.5 text-sm text-slate-600"><input type="checkbox" className="accent-brand" checked={alleenMijn} onChange={e => setAlleenMijn(e.target.checked)} />Alleen mijn groepen</label>
+          <label className="flex items-center gap-1.5 text-sm text-slate-600"><input type="checkbox" className="accent-brand" checked={alleenMijn} onChange={e => zetAlleenMijn(e.target.checked)} />Alleen mijn groepen</label>
           <button onClick={() => setModal({})} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">+ Opvolging</button>
         </div>
       </div>
@@ -3670,7 +3672,15 @@ function periodeKeuzesVan(groepen, trajecten) {
   trajecten.forEach(t => ((t.semesters || []).length ? t.semesters : [huidigSemesterNaam()]).forEach(n => plus(n, 'trajecten')));
   return [...tel].map(([naam, x]) => ({ naam, ...x })).sort((a, b) => semesterVolgorde(b.naam) - semesterVolgorde(a.naam));
 }
-function PeriodeBalk({ periode, zetPeriode, groepen, trajecten }) {
+// "Alleen van mij": wie ben ik, en hoort iets bij mij? (ook bij een kleine schrijfverschil in de naam)
+const ikVoorFilter = () => teamNaamVoor(mijnNaam(), TEAM_NAMEN) || String(mijnNaam() || '').trim();
+const isIk = (n, ik) => !!ik && !!n && (isZelfde(n, ik) || isZelfde(teamNaamVoor(n, TEAM_NAMEN), ik));
+const bevatIk = (tekst, ik) => naamLijst(tekst).some(n => isIk(n, ik));
+const contactVanMij = (c, ik) => bevatIk(c.eigenaar, ik);
+const trajectVanMij = (t, ik) => bevatIk(t.senior, ik) || bevatIk(t.junior, ik);
+const groepVanMij = (g, ik) => { const r = cgRollenVan(g); return isIk(r.senior, ik) || isIk(r.junior, ik) || bevatIk(g.contactCG, ik); };
+
+function PeriodeBalk({ periode, zetPeriode, groepen, trajecten, alleenMijn = false, zetAlleenMijn = () => {}, ik = '' }) {
   const keuzes = useMemo(() => periodeKeuzesVan(groepen, trajecten), [groepen, trajecten]);
   const nu = huidigSemesterNaam();
   const isNu = periode === nu;
@@ -3686,7 +3696,12 @@ function PeriodeBalk({ periode, zetPeriode, groepen, trajecten }) {
         </select>
         {!isNu && <span className="text-amber-900">{allePeriodes(periode) ? 'Je ziet alles, ook vorige jaren.' : <>Je bekijkt <strong>{periode}</strong>{tijd}.</>}</span>}
         {!isNu && <button type="button" onClick={() => zetPeriode(nu)} className="px-2 py-0.5 rounded-md border border-amber-300 text-amber-900 text-xs hover:bg-amber-100">Terug naar nu</button>}
-        <span className="text-xs text-slate-400 ml-auto">Geldt voor Taken, Trajecten, Studentengroepen en Cijfers · Contacten tonen altijd alles</span>
+        <button type="button" onClick={() => zetAlleenMijn(!alleenMijn)} aria-pressed={alleenMijn} disabled={!ik}
+          title={ik ? 'Alleen jouw contacten (eigenaar), trajecten (senior of junior, ook via een groep), groepen (senior of junior) en taken. Blijft aan op deze computer.' : 'Vul eerst je naam in (bij Taken, "Jouw naam")'}
+          className={'ml-2 px-2.5 py-1 rounded-lg text-sm font-medium border disabled:opacity-40 ' + (alleenMijn ? 'bg-brand text-white border-brand' : 'border-slate-300 text-slate-600 hover:bg-slate-50')}>
+          👤 Alleen van mij{alleenMijn && ik ? ' (' + ik + ')' : ''}
+        </button>
+        <span className="text-xs text-slate-400 ml-auto">Periode: Taken, Trajecten, Studentengroepen, Cijfers · Contacten tonen altijd alle periodes</span>
       </div>
     </div>
   );
@@ -4391,7 +4406,7 @@ function GroepLijstKolommen({ g, state }) {
   </>);
 }
 
-function StudentenGroepenTab({ periode = '*', zetPeriode = () => {}, groepen, setGroepen, trajecten, setTrajecten, contacten, checklist = {}, setChecklist, externalDetail, clearExternalDetail, onOpenTraject, terugNaarTaken }) {
+function StudentenGroepenTab({ periode = '*', zetPeriode = () => {}, mijn = '', groepen, setGroepen, trajecten, setTrajecten, contacten, checklist = {}, setChecklist, externalDetail, clearExternalDetail, onOpenTraject, terugNaarTaken }) {
   const [detailId, setDetailId] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -4436,6 +4451,7 @@ function StudentenGroepenTab({ periode = '*', zetPeriode = () => {}, groepen, se
       if (fInst && g.onderwijsinstelling !== fInst) return false;
       if (fCG && !heeftNaam(g.contactCG, fCG)) return false;
       if (!inWerkperiode(groepSemester(g), fSem)) return false;
+      if (mijn && !groepVanMij(g, mijn)) return false;
       if (q) {
         const blob = [g.groepsnummer,g.thema,g.titel,g.onderwijsinstelling,g.opleiding,g.contactCG,g.docent,
           ...(g.studenten||[]).map(s=>s.naam)].join(' ').toLowerCase();
@@ -4443,7 +4459,7 @@ function StudentenGroepenTab({ periode = '*', zetPeriode = () => {}, groepen, se
       }
       return true;
     });
-  }, [groepen, zoek, fThema, fInst, fCG, fSem]);
+  }, [groepen, zoek, fThema, fInst, fCG, fSem, mijn]);
 
   const detail = groepen.find(g => g.id === detailId);
 
@@ -5890,13 +5906,17 @@ function App() {
   }
 
   const [periode, setPeriodeState] = useState(beginPeriode);
+  const [alleenMijn, setAlleenMijnState] = useState(() => !!loadLS(LS_ALLEENMIJN, false));
+  const zetAlleenMijn = v => { setAlleenMijnState(v); saveLS(LS_ALLEENMIJN, v); };
+  const ikFilter = ikVoorFilter();
+  const mijnAan = alleenMijn && !!ikFilter;
   const zetPeriode = p => { setPeriodeState(p); try { sessionStorage.setItem(SS_PERIODE, p); } catch (e) {} };
   const groepenP = useMemo(() => groepen.filter(g => inWerkperiode(groepSemester(g), periode)), [groepen, periode]);
   const takenTeller = useMemo(() => {
-    const o = CGT.takenOverzicht(groepenP, checklist, CGT.vandaagISO());
+    const o = CGT.takenOverzicht(mijnAan ? groepenP.filter(g => groepVanMij(g, ikFilter)) : groepenP, checklist, CGT.vandaagISO());
     const ik = teamNaamVoor(mijnNaam(), TEAM_NAMEN) || mijnNaam();
     return o.opvolgen.length + o.signalen.filter(x => !x.verborgen && (x.niveau === 'urgent' || x.niveau === 'binnenkort')).length + voorJouVan(groepen, ik).length;
-  }, [groepen, groepenP, checklist, team]);
+  }, [groepen, groepenP, checklist, team, mijnAan, ikFilter]);
   const [vanTaken, setVanTaken] = useState(false);
   // tabblad Cijfers: Overzicht of Uren partners (per computer onthouden); "bekijk in uren" springt naar Uren partners
   const [cijferDeel, setCijferDeel] = useState(() => loadLS('cgt_cijfers_deel', 'overzicht') || 'overzicht');
@@ -6020,7 +6040,7 @@ function App() {
           </div>
         </div>
       </header>
-      <PeriodeBalk periode={periode} zetPeriode={zetPeriode} groepen={groepen} trajecten={trajecten} />
+      <PeriodeBalk periode={periode} zetPeriode={zetPeriode} groepen={groepen} trajecten={trajecten} alleenMijn={mijnAan} zetAlleenMijn={zetAlleenMijn} ik={ikFilter} />
 
       {syncStatus === 'niet-gekoppeld' && (
         <div className="bg-amber-50 border-b border-amber-200 text-amber-900">
@@ -6057,12 +6077,12 @@ function App() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
         {tab === 'taken' && (
-          <TakenTab groepen={groepenP} alleGroepen={groepen} setGroepen={setGroepen} checklist={checklist} onOpenGroep={openGroepFromTaken}
+          <TakenTab groepen={groepenP} alleGroepen={groepen} alleenMijn={alleenMijn} zetAlleenMijn={zetAlleenMijn} setGroepen={setGroepen} checklist={checklist} onOpenGroep={openGroepFromTaken}
             contacten={contacten} setContacten={setContactenMetUren} onOpenContact={(id) => { setTab('contacten'); setOpenContactId(id); }} welkomFoto={welkomFoto} />
         )}
         {tab === 'trajecten' && (
           <TrajectenTab
-            trajecten={trajecten} setTrajecten={setTrajecten} contacten={contacten} periode={periode}
+            trajecten={trajecten} setTrajecten={setTrajecten} contacten={contacten} periode={periode} mijn={mijnAan ? ikFilter : ''}
             groepen={groepen} onCreateContact={createContact}
             onOpenContact={openContactFromTraject} onOpenGroep={openGroepFromTraject}
             externalDetail={pendingTrajectId} clearExternal={() => setPendingTrajectId(null)}
@@ -6071,7 +6091,7 @@ function App() {
         {tab === 'groepen' && (
           <StudentenGroepenTab
             groepen={groepen} setGroepen={setGroepen} trajecten={trajecten} setTrajecten={setTrajecten} contacten={contacten}
-            periode={periode} zetPeriode={zetPeriode}
+            periode={periode} zetPeriode={zetPeriode} mijn={mijnAan ? ikFilter : ''}
             checklist={checklist} setChecklist={setChecklist}
             externalDetail={pendingGroepId} clearExternalDetail={() => setPendingGroepId(null)}
             onOpenTraject={openTrajectFromGroep}
@@ -6080,7 +6100,7 @@ function App() {
         )}
         {tab === 'contacten' && (
           <ContactenTab
-            contacten={contacten} setContacten={setContactenMetUren} trajecten={trajecten} uren={urenAlles}
+            contacten={contacten} setContacten={setContactenMetUren} trajecten={trajecten} uren={urenAlles} mijn={mijnAan ? ikFilter : ''}
             openContactId={openContactId} setOpenContactId={setOpenContactId}
             pendingNewContact={pendingNewContact} clearPendingNewContact={() => setPendingNewContact(null)}
             onOpenTraject={openTrajectFromContact} onOpenUrenOrg={openUrenForOrg}
