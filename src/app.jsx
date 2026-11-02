@@ -59,7 +59,7 @@ function overNaamvelden(d, fn) {
   return {
     trajecten: (d.trajecten || []).map(t => st(st(t, 'senior'), 'junior')),
     groepen: (d.groepen || []).map(g => {
-      let x = st(g, 'contactCG');
+      let x = st(st(st(g, 'contactCG'), 'cgSenior'), 'cgJunior');
       if (Array.isArray(x.taken)) x = { ...x, taken: x.taken.map(t => st(t, 'door')) };
       if (Array.isArray(x.aantekeningen)) x = { ...x, aantekeningen: x.aantekeningen.map(a => st(a, 'door')) };
       return x;
@@ -3698,15 +3698,62 @@ function losseNamen(waarden, extra) {
   return [...m.values()].sort((a, b) => a.localeCompare(b, 'nl'));
 }
 
+// Contact Campus Gouda bij een groep: een senior en een junior (cgSenior, cgJunior).
+// contactCG blijft bestaan als "senior/junior", zodat filters, Taken, Cijfers en export blijven werken.
+function cgRollenVan(g) {
+  if (g && (g.cgSenior !== undefined || g.cgJunior !== undefined)) return { senior: g.cgSenior || '', junior: g.cgJunior || '', rest: [] };
+  const uit = { senior: '', junior: '', rest: [] };
+  // ook 'naam naam' zonder scheidingsteken, als elk woord een teamnaam is
+  naamLijst((g && g.contactCG) || '').flatMap(n => { const w = n.split(/\s+/); return w.length > 1 && w.every(x => teamNaamVoor(x, TEAM_NAMEN)) ? w : [n]; }).forEach(n => {
+    const sen = teamNaamVoor(n, SENIOREN), jun = teamNaamVoor(n, JUNIOREN);
+    if (sen && !uit.senior) uit.senior = sen; else if (jun && !uit.junior) uit.junior = jun; else uit.rest.push(n);
+  });
+  // namen die niet in het team staan: in het eerste lege vak
+  uit.rest = uit.rest.filter(n => { if (!uit.senior) { uit.senior = n; return false; } if (!uit.junior) { uit.junior = n; return false; } return true; });
+  return uit;
+}
+const metCgRollen = g => ({ ...g, cgSenior: g.cgSenior || '', cgJunior: g.cgJunior || '', contactCG: [g.cgSenior, g.cgJunior].filter(Boolean).join('/') });
+// docenten uit Contacten: eerst van de onderwijsinstelling van de groep, dan wie docent/lector is, dan de rest
+function docentKeuzesVan(contacten, instelling) {
+  const inst = normaliseerOrg(instelling || '');
+  const score = c => {
+    const org = normaliseerOrg(c.organisatie || '');
+    if (inst && org && (org.includes(inst) || inst.includes(org))) return 0;
+    if (/docent|lector|begeleid|co[öo]rdinator|teacher/i.test(c.functie || '')) return 1;
+    return 2;
+  };
+  return contacten.filter(c => c && c.naam).map(c => ({ c, s: score(c) })).sort((a, b) => a.s - b.s || a.c.naam.localeCompare(b.c.naam, 'nl')).map(x => x.c);
+}
+
 function GroepForm({ initial, trajecten, contacten, groepen = [], onSave, onCancel }) {
   const isNieuw = !String(initial.groepsnummer || '').trim();
   const [f, setF] = useState(() => {
     const base = { ...initial, studenten: (initial.studenten || []).map(s => ({ ...s })) };
+    const rollen = cgRollenVan(initial);
+    base.cgSenior = rollen.senior; base.cgJunior = rollen.junior;
     if (isNieuw) base.groepsnummer = nextGroepsnummer(base.thema, groepen, base.id);
     return base;
   });
   const [manualNr, setManualNr] = useState(!isNieuw); // bestaand nummer = handmatig behouden
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const eerdereCG = useMemo(() => cgRollenVan(initial).rest, []);
+  const rolOpties = (lijst, huidig) => { const l = lijst.length ? [...lijst] : [...collegas]; return huidig && !l.includes(huidig) ? [...l, huidig] : l; };
+  // docentbegeleider: typen geeft namen uit Contacten; kies je er een, dan komt het mailadres er vanzelf bij
+  const docentKeuzes = useMemo(() => docentKeuzesVan(contacten || [], f.onderwijsinstelling), [contacten, f.onderwijsinstelling]);
+  const autoMail = React.useRef('');
+  const docentContact = (contacten || []).find(c => c.naam && c.naam.trim().toLowerCase() === String(f.docent || '').trim().toLowerCase());
+  const kiesDocent = e => {
+    const v = e.target.value;
+    const c = (contacten || []).find(x => x.naam && x.naam.trim().toLowerCase() === v.trim().toLowerCase());
+    setF(p => {
+      const n = { ...p, docent: v };
+      if (c) {
+        n.docentContactId = c.id;
+        if (c.email && (!p.docentMail || p.docentMail === autoMail.current)) { n.docentMail = c.email; autoMail.current = c.email; }
+      } else if (p.docentContactId) n.docentContactId = '';
+      return n;
+    });
+  };
   const collegas = useMemo(() => TEAM_NAMEN.length ? [...TEAM_NAMEN] : [...new Set(contacten.map(c => c.naam).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'nl')), [contacten]);
 
   // bij themawijziging het automatische nummer bijwerken (tenzij handmatig aangepast)
@@ -3760,11 +3807,24 @@ function GroepForm({ initial, trajecten, contacten, groepen = [], onSave, onCanc
       <Field label="Vorm traject"><input className={inputCls} value={f.vorm} onChange={set('vorm')} placeholder="bijv. 20 weken / 8 weeks" /></Field>
       <Field label="Onderwijsinstelling"><input className={inputCls} value={f.onderwijsinstelling} onChange={set('onderwijsinstelling')} placeholder="HU / HHS / CHE / HR" /></Field>
       <Field label="Opleiding / minor"><input className={inputCls} value={f.opleiding} onChange={set('opleiding')} /></Field>
-      <Field label="Contact Campus Gouda">
-        <input className={inputCls} list="cg-collegas-grp" value={f.contactCG} onChange={set('contactCG')} />
-        <datalist id="cg-collegas-grp">{collegas.map((n,i)=><option key={i} value={n} />)}</datalist>
+      <Field label="Senior Campus Gouda">
+        <select className={inputCls} value={f.cgSenior || ''} onChange={set('cgSenior')}>
+          <option value="">— geen —</option>{rolOpties(SENIOREN, f.cgSenior).map(x => <option key={x}>{x}</option>)}
+        </select>
       </Field>
-      <Field label="Docentbegeleider"><input className={inputCls} value={f.docent} onChange={set('docent')} /></Field>
+      <Field label="Junior Campus Gouda">
+        <select className={inputCls} value={f.cgJunior || ''} onChange={set('cgJunior')}>
+          <option value="">— geen —</option>{rolOpties(JUNIOREN, f.cgJunior).map(x => <option key={x}>{x}</option>)}
+        </select>
+      </Field>
+      {eerdereCG.length > 0 && <div className="sm:col-span-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Eerder stond hier ook: <strong>{eerdereCG.join(', ')}</strong>. Er is plek voor één senior en één junior; kies hierboven wie het is.</div>}
+      <Field label="Docentbegeleider">
+        <input className={inputCls} list="cg-docenten" value={f.docent} onChange={kiesDocent} placeholder="Typ een naam uit Contacten…" autoComplete="off" />
+        <datalist id="cg-docenten">{docentKeuzes.map(c => <option key={c.id} value={c.naam}>{[c.functie, c.organisatie].filter(Boolean).join(' · ')}</option>)}</datalist>
+        {docentContact
+          ? <span className="block text-xs text-brand mt-1">✓ Uit Contacten{docentContact.organisatie ? ': ' + docentContact.organisatie : ''}{docentContact.email ? '' : ' · daar staat geen mailadres'}</span>
+          : f.docent ? <span className="block text-xs text-slate-400 mt-1">Niet gevonden in Contacten; vul het mailadres zelf in.</span> : null}
+      </Field>
       <Field label="Mailadres docent"><input className={inputCls} type="email" value={f.docentMail} onChange={set('docentMail')} /></Field>
       <Field label="Wekelijkse afspraak" full><input className={inputCls} value={f.wekelijkseAfspraak} onChange={set('wekelijkseAfspraak')} placeholder="bijv. dinsdag 10:00" /></Field>
       <div className="sm:col-span-2 text-xs text-slate-500 bg-brandlight/40 border border-brand/20 rounded-lg px-3 py-2">
@@ -3794,7 +3854,7 @@ function GroepForm({ initial, trajecten, contacten, groepen = [], onSave, onCanc
 
       <div className="sm:col-span-2 flex justify-end gap-2 pt-2">
         <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">Annuleren</button>
-        <button onClick={() => onSave(f)} disabled={!f.groepsnummer.trim()} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark disabled:opacity-40">Opslaan</button>
+        <button onClick={() => onSave(metCgRollen(f))} disabled={!f.groepsnummer.trim()} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark disabled:opacity-40">Opslaan</button>
       </div>
     </div>
   );
@@ -4200,7 +4260,8 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
             <div>
               <Row label="Vorm traject" value={g.vorm} />
               <Row label="Opleiding / minor" value={g.opleiding} />
-              <Row label="Contact Campus Gouda" value={g.contactCG} />
+              <Row label="Senior Campus Gouda" value={cgRollenVan(g).senior} />
+              <Row label="Junior Campus Gouda" value={cgRollenVan(g).junior} />
               <Row label="Docentbegeleider" value={g.docent} />
               <Row label="Mailadres docent" value={g.docentMail ? <a className="text-brand hover:underline" href={'mailto:'+g.docentMail}>{g.docentMail}</a> : ''} />
               <Row label="Wekelijkse afspraak" value={g.wekelijkseAfspraak} />
@@ -4668,7 +4729,7 @@ function StudentenGroepenTab({ periode = '*', zetPeriode = () => {}, groepen, se
               <th className="px-3 py-2 font-semibold">Thema</th>
               <th className="px-3 py-2 font-semibold">Onderwijsinstelling</th>
               <th className="px-3 py-2 font-semibold">Onderwerp</th>
-              <th className="px-3 py-2 font-semibold">Contact CG</th>
+              <th className="px-3 py-2 font-semibold">Senior / junior CG</th>
               <th className="px-3 py-2 font-semibold">Voortgang</th>
               <th className="px-3 py-2 font-semibold">Volgende moment</th>
               <th className="px-3 py-2 font-semibold">Aandacht</th>
@@ -4682,7 +4743,7 @@ function StudentenGroepenTab({ periode = '*', zetPeriode = () => {}, groepen, se
                 <td className="px-3 py-2">{g.thema ? <Badge className={THEMA_KLEUR[g.thema]||THEMA_KLEUR['Overig']}>{g.thema}</Badge> : '—'}</td>
                 <td className="px-3 py-2 text-slate-600">{g.onderwijsinstelling || '—'}</td>
                 <td className="px-3 py-2 text-slate-600">{g.titel || '—'}</td>
-                <td className="px-3 py-2 text-slate-600">{g.contactCG || '—'}</td>
+                <td className="px-3 py-2 text-slate-600">{(() => { const r = cgRollenVan(g); return r.senior || r.junior ? <>{r.senior || '—'} <span className="text-slate-400">/</span> {r.junior || '—'}</> : '—'; })()}</td>
                 <GroepLijstKolommen g={g} state={checklist[g.id]} />
                 <td className="px-3 py-2 text-right text-slate-600">{(g.studenten||[]).length}</td>
               </tr>

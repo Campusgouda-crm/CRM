@@ -542,6 +542,8 @@
     const uit = Object.assign({}, oud);
     ['titel', 'vorm', 'onderwijsinstelling', 'opleiding', 'contactCG', 'docent', 'docentMail', 'wekelijkseAfspraak', 'kickoff', 'tussenpresentatie', 'eindpresentatie']
       .forEach(v => { if (nieuw[v]) uit[v] = nieuw[v]; });
+    // nieuw contact Campus Gouda uit Excel: senior en junior opnieuw afleiden uit die namen
+    if (nieuw.contactCG && nieuw.contactCG !== oud.contactCG) { delete uit.cgSenior; delete uit.cgJunior; }
     if (!oud.trajectId && nieuw.trajectId) uit.trajectId = nieuw.trajectId;
     if (!duurVan(oud) && nieuw.duurWeken) uit.duurWeken = nieuw.duurWeken;
     // momenten: een vaste datum uit Excel wint; wat je in het CRM zelf hebt vastgezet blijft anders staan
