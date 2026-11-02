@@ -166,6 +166,7 @@ const LS_TARGETS = 'cgt_uren_targets_v1';
 const LS_GROEPEN = 'cgt_groepen_v1';
 const LS_CHECKLIST = 'cgt_checklist_v1';
 const LS_TEAM = 'cgt_team_v1';
+const LS_EVALUATIES = 'cgt_evaluaties_v1', LS_VERBETERPUNTEN = 'cgt_verbeterpunten_v1';
 // laatste stand die gelijk was aan de gedeelde map (om wijzigingen van tussendoor niet kwijt te raken)
 const LS_SYNC_STAND = 'cgt_sync_stand_v1';
 const LS_FEEDBACK = 'cgt_feedback_v1';
@@ -789,6 +790,7 @@ function TrajectDetail({ traject, contacten, groepen = [], onOpenGroep, onToggle
           {t.speerpunt && <p className="text-slate-500">{t.speerpunt}</p>}
         </div>
         <div className="flex gap-2 shrink-0">
+          <button onClick={() => nieuweEvaluatie({ soort: 'Innovatietraject', trajectId: t.id })} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50">+ Evaluatie</button>
           <button onClick={onEdit} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm hover:bg-branddark">Bewerken</button>
           <button onClick={() => onToggleArchief && onToggleArchief(t.id)} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50">{t.gearchiveerd ? 'Herstellen' : 'Archiveren'}</button>
           <button onClick={onDelete} className="px-3 py-1.5 rounded-lg border border-rose-300 text-rose-600 text-sm hover:bg-rose-50">Verwijderen</button>
@@ -1646,6 +1648,7 @@ function ContactDetail({ contact, trajecten, uren = [], kansSoorten = KANS_STAND
           <p className="text-slate-500">{[c.functie, c.organisatie].filter(Boolean).join(' · ')}</p>
         </div>
         <div className="flex gap-2 shrink-0">
+          <button onClick={() => nieuweEvaluatie({ contactId: c.id, organisatie: c.organisatie || '' })} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50" title="Waardering of evaluatie van deze partner vastleggen">+ Waardering</button>
           <button onClick={onEdit} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm hover:bg-branddark">Bewerken</button>
           <button onClick={onDelete} className="px-3 py-1.5 rounded-lg border border-rose-300 text-rose-600 text-sm hover:bg-rose-50">Verwijderen</button>
         </div>
@@ -3715,6 +3718,207 @@ function maakTakenmail(team, groepen, checklist, vandaag) {
   return mails;
 }
 
+// ============================================================
+// EVALUATIES EN VERBETERREGISTER
+// ============================================================
+const EVAL_SOORTEN = ['Innovatietraject', 'LLO', 'Challenge'];
+const EVAL_WIE = ['Opdrachtgever', 'Studenten', 'Onderwijs'];
+const VERBETER_STATUS = ['Open', 'Bezig', 'Doorgevoerd', 'Niet doen'];
+const VERBETER_VOOR = ['Alles', 'Innovatietrajecten', 'LLO', 'Challenges'];
+const VOOR_VAN_SOORT = { Innovatietraject: 'Innovatietrajecten', LLO: 'LLO', Challenge: 'Challenges' };
+const STATUS_STIJL = { Open: 'bg-amber-50 text-amber-800 border-amber-200', Bezig: 'bg-sky-50 text-sky-800 border-sky-200', Doorgevoerd: 'bg-brandlight text-branddark border-brand/30', 'Niet doen': 'bg-slate-100 text-slate-500 border-slate-200' };
+const nieuweEvaluatie = start => window.dispatchEvent(new CustomEvent('cg-nieuwe-evaluatie', { detail: start || {} }));
+const getalNL = x => (Math.round(x * 10) / 10).toLocaleString('nl-NL');
+// eigen evaluaties plus de cijfers van opdrachtgevers die bij "Afronding" van een groep staan
+function alleEvaluaties(evaluaties, groepen) {
+  const uitGroep = (groepen || []).filter(g => g.evaluatie && g.evaluatie.tevredenheid).map(g => {
+    const p = CGT.planning(g, CGT.vandaagISO());
+    return { id: 'groep:' + g.id, bron: 'groep', soort: 'Innovatietraject', perspectief: 'Opdrachtgever', cijfer: Number(g.evaluatie.tevredenheid), datum: g.evaluatie.ingevuldOp || p.eindDatum || '', groepId: g.id, trajectId: g.trajectId || '', goed: g.evaluatie.citaat || '', beter: '', door: '' };
+  });
+  return [...(evaluaties || []), ...uitGroep].sort((a, b) => String(b.datum || '').localeCompare(String(a.datum || '')));
+}
+function evaluatieOnderwerp(e, { trajecten = [], groepen = [], contacten = [] }) {
+  const g = e.groepId && groepen.find(x => x.id === e.groepId);
+  const t = e.trajectId && trajecten.find(x => x.id === e.trajectId);
+  const c = e.contactId && contacten.find(x => x.id === e.contactId);
+  const wat = g ? [g.groepsnummer, g.titel].filter(Boolean).join(' · ') : t ? t.titel : (e.activiteit || '');
+  const wie = c ? c.naam + (c.organisatie ? ' (' + c.organisatie + ')' : '') : (e.organisatie || '');
+  return [wat, wie].filter(Boolean).join(' — ') || '—';
+}
+// gemiddelde per wie (opdrachtgever, studenten, onderwijs) en per soort
+function TevredenTabel({ lijst }) {
+  const cel = (wie, soort) => { const r = lijst.filter(e => e.cijfer && (!wie || e.perspectief === wie) && (!soort || e.soort === soort)); return r.length ? { gem: r.reduce((n, e) => n + Number(e.cijfer), 0) / r.length, n: r.length } : null; };
+  const toon = x => x ? <><span className="font-semibold text-ink">{getalNL(x.gem)}</span><span className="text-xs text-slate-400"> /5 · {x.n}</span></> : <span className="text-slate-300">—</span>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead><tr className="text-left text-slate-500"><th className="py-1.5 pr-3 font-medium">Tevredenheid van</th>{EVAL_SOORTEN.map(x => <th key={x} className="py-1.5 px-2 font-medium">{x === 'Innovatietraject' ? 'Innovatietrajecten' : x === 'Challenge' ? 'Challenges' : x}</th>)}<th className="py-1.5 px-2 font-medium">Alles</th></tr></thead>
+        <tbody className="divide-y divide-slate-100">
+          {EVAL_WIE.map(w => <tr key={w}><td className="py-1.5 pr-3 text-slate-700">{w === 'Onderwijs' ? 'Onderwijs (docenten)' : w === 'Opdrachtgever' ? 'Opdrachtgevers' : w}</td>{EVAL_SOORTEN.map(x => <td key={x} className="py-1.5 px-2">{toon(cel(w, x))}</td>)}<td className="py-1.5 px-2">{toon(cel(w, ''))}</td></tr>)}
+          <tr className="border-t border-slate-200"><td className="py-1.5 pr-3 font-medium text-ink">Alles</td>{EVAL_SOORTEN.map(x => <td key={x} className="py-1.5 px-2">{toon(cel('', x))}</td>)}<td className="py-1.5 px-2">{toon(cel('', ''))}</td></tr>
+        </tbody>
+      </table>
+      <p className="text-xs text-slate-400 mt-1">Gemiddeld cijfer (1–5) · aantal evaluaties.</p>
+    </div>
+  );
+}
+function EvaluatieForm({ initial, trajecten, groepen, contacten, onSave, onCancel }) {
+  const [f, setF] = useState(() => ({ soort: 'Innovatietraject', perspectief: 'Opdrachtgever', datum: CGT.vandaagISO(), cijfer: '', aantal: '', trajectId: '', groepId: '', activiteit: '', contactId: '', organisatie: '', goed: '', beter: '', door: ikVoorFilter(), ...initial, id: initial.id || uid() }));
+  const set = k => e => setF(p => ({ ...p, [k]: e.target.value }));
+  const isTraject = f.soort === 'Innovatietraject';
+  const trajectKeuzes = useMemo(() => [...trajecten].filter(t => t.titel).sort((a, b) => a.titel.localeCompare(b.titel, 'nl')), [trajecten]);
+  const groepKeuzes = useMemo(() => groepen.filter(g => !f.trajectId || g.trajectId === f.trajectId).sort((a, b) => String(a.groepsnummer).localeCompare(String(b.groepsnummer), 'nl', { numeric: true })), [groepen, f.trajectId]);
+  const contactKeuzes = useMemo(() => [...contacten].filter(c => c.naam).sort((a, b) => a.naam.localeCompare(b.naam, 'nl')), [contacten]);
+  const cijferOk = f.cijfer === '' || (Number(String(f.cijfer).replace(',', '.')) >= 1 && Number(String(f.cijfer).replace(',', '.')) <= 5);
+  const genoeg = (f.cijfer !== '' || f.goed.trim() || f.beter.trim()) && cijferOk;
+  const opslaan = () => {
+    const c = contacten.find(x => x.id === f.contactId);
+    const g = groepen.find(x => x.id === f.groepId);
+    onSave({ ...f, cijfer: f.cijfer === '' ? null : Math.round(Number(String(f.cijfer).replace(',', '.')) * 10) / 10, aantal: f.aantal === '' ? null : Number(f.aantal),
+      trajectId: isTraject ? (f.trajectId || (g && g.trajectId) || '') : '', groepId: isTraject ? f.groepId : '', activiteit: isTraject ? '' : f.activiteit.trim(),
+      organisatie: (c && c.organisatie) || f.organisatie.trim(), goed: f.goed.trim(), beter: f.beter.trim(), aangemaakt: f.aangemaakt || new Date().toISOString() });
+  };
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <Field label="Soort"><select className={inputCls} value={f.soort} onChange={set('soort')}>{EVAL_SOORTEN.map(x => <option key={x}>{x}</option>)}</select></Field>
+      <Field label="Tevredenheid van"><select className={inputCls} value={f.perspectief} onChange={set('perspectief')}>{EVAL_WIE.map(x => <option key={x} value={x}>{x === 'Onderwijs' ? 'Onderwijs (docenten)' : x}</option>)}</select></Field>
+      {isTraject ? <>
+        <Field label="Traject"><select className={inputCls} value={f.trajectId} onChange={e => setF(p => ({ ...p, trajectId: e.target.value, groepId: '' }))}><option value="">— kies —</option>{trajectKeuzes.map(t => <option key={t.id} value={t.id}>{t.titel}</option>)}</select></Field>
+        <Field label="Studentengroep (optioneel)"><select className={inputCls} value={f.groepId} onChange={set('groepId')}><option value="">— geen —</option>{groepKeuzes.map(g => <option key={g.id} value={g.id}>{[g.groepsnummer, g.titel].filter(Boolean).join(' · ')}</option>)}</select></Field>
+      </> : <Field label={f.soort === 'LLO' ? 'Naam van de LLO-activiteit' : 'Naam van de challenge'} full><input className={inputCls} value={f.activiteit} onChange={set('activiteit')} placeholder={f.soort === 'LLO' ? 'bijv. leergang data-analyse' : 'bijv. challenge bodemdaling'} /></Field>}
+      <Field label="Partner / contact (optioneel)"><select className={inputCls} value={f.contactId} onChange={set('contactId')}><option value="">— geen —</option>{contactKeuzes.map(c => <option key={c.id} value={c.id}>{c.naam}{c.organisatie ? ' · ' + c.organisatie : ''}</option>)}</select></Field>
+      <Field label="Datum"><input type="date" className={inputCls} value={f.datum} onChange={set('datum')} /></Field>
+      <Field label="Cijfer (1–5)"><input className={inputCls + (cijferOk ? '' : ' border-rose-400')} inputMode="decimal" value={f.cijfer ?? ''} onChange={set('cijfer')} placeholder="bijv. 4 of 4,2" /></Field>
+      <Field label="Aantal deelnemers (bij een enquête)"><input className={inputCls} type="number" min="1" value={f.aantal ?? ''} onChange={set('aantal')} placeholder="optioneel" /></Field>
+      <Field label="Wat ging goed?" full><textarea className={inputCls + ' h-20'} value={f.goed} onChange={set('goed')} /></Field>
+      <Field label="Wat kan beter?" full><textarea className={inputCls + ' h-20'} value={f.beter} onChange={set('beter')} placeholder="Hier maak je later met één klik een verbeterpunt van" /></Field>
+      <Field label="Ingevuld door"><select className={inputCls} value={f.door} onChange={set('door')}><option value="">—</option>{[...new Set([...TEAM_NAMEN, f.door].filter(Boolean))].map(n => <option key={n}>{n}</option>)}</select></Field>
+      <div className="sm:col-span-2 flex justify-end gap-2 pt-3 border-t border-slate-100">
+        <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">Annuleren</button>
+        <button type="button" onClick={opslaan} disabled={!genoeg} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark disabled:opacity-40">Opslaan</button>
+      </div>
+    </div>
+  );
+}
+function VerbeterForm({ initial, onSave, onCancel }) {
+  const [f, setF] = useState(() => ({ titel: '', toelichting: '', geldtVoor: 'Alles', actie: '', eigenaar: ikVoorFilter(), status: 'Open', datum: CGT.vandaagISO(), evaluatieId: '', ...initial, id: initial.id || uid() }));
+  const set = k => e => setF(p => ({ ...p, [k]: e.target.value }));
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <Field label="Les of verbeterpunt" full><input className={inputCls} value={f.titel} onChange={set('titel')} placeholder="bijv. Tussenpresentatie eerder vastleggen met de opdrachtgever" /></Field>
+      <Field label="Toelichting" full><textarea className={inputCls + ' h-20'} value={f.toelichting} onChange={set('toelichting')} /></Field>
+      <Field label="Geldt voor"><select className={inputCls} value={f.geldtVoor} onChange={set('geldtVoor')}>{VERBETER_VOOR.map(x => <option key={x}>{x}</option>)}</select></Field>
+      <Field label="Status"><select className={inputCls} value={f.status} onChange={set('status')}>{VERBETER_STATUS.map(x => <option key={x}>{x}</option>)}</select></Field>
+      <Field label="Actie (wat gaan we doen?)" full><input className={inputCls} value={f.actie} onChange={set('actie')} /></Field>
+      <Field label="Eigenaar"><select className={inputCls} value={f.eigenaar} onChange={set('eigenaar')}><option value="">—</option>{[...new Set([...TEAM_NAMEN, f.eigenaar].filter(Boolean))].map(n => <option key={n}>{n}</option>)}</select></Field>
+      <Field label="Datum"><input type="date" className={inputCls} value={f.datum} onChange={set('datum')} /></Field>
+      <div className="sm:col-span-2 flex justify-end gap-2 pt-3 border-t border-slate-100">
+        <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">Annuleren</button>
+        <button type="button" onClick={() => onSave({ ...f, titel: f.titel.trim(), toelichting: f.toelichting.trim(), actie: f.actie.trim(), aangemaakt: f.aangemaakt || new Date().toISOString() })} disabled={!f.titel.trim()} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark disabled:opacity-40">Opslaan</button>
+      </div>
+    </div>
+  );
+}
+function EvaluatiesTab({ evaluaties, setEvaluaties, verbeterpunten, setVerbeterpunten, groepen, trajecten, contacten, periode = '*', mijn = '' }) {
+  const [deel, setDeelState] = useState(() => loadLS('cgt_evaluaties_deel', 'evaluaties') || 'evaluaties');
+  const setDeel = d => { setDeelState(d); saveLS('cgt_evaluaties_deel', d); };
+  const [fSoort, setFSoort] = useState(''), [fWie, setFWie] = useState('');
+  const [fStatus, setFStatus] = useState('nietklaar'), [fVoor, setFVoor] = useState('');
+  const [verbeter, setVerbeter] = useState(null);
+  const lookups = { trajecten, groepen, contacten };
+  const alle = useMemo(() => alleEvaluaties(evaluaties, groepen), [evaluaties, groepen]);
+  const inPeriodeE = e => inWerkperiode(e.datum ? semNaam(semesterVan(e.datum)) : '', periode);
+  const zichtbaar = alle.filter(e => inPeriodeE(e) && (!fSoort || e.soort === fSoort) && (!fWie || e.perspectief === fWie));
+  const punten = verbeterpunten.filter(v => (fStatus === 'nietklaar' ? !['Doorgevoerd', 'Niet doen'].includes(v.status) : !fStatus || v.status === fStatus) && (!fVoor || v.geldtVoor === fVoor || v.geldtVoor === 'Alles') && (!mijn || isIk(v.eigenaar, mijn)))
+    .sort((a, b) => VERBETER_STATUS.indexOf(a.status) - VERBETER_STATUS.indexOf(b.status) || String(b.datum).localeCompare(String(a.datum)));
+  const bewaarPunt = v => { setVerbeterpunten(prev => prev.some(x => x.id === v.id) ? prev.map(x => x.id === v.id ? v : x) : [...prev, v]); setVerbeter(null); };
+  const kort = t => { const x = String(t || '').replace(/\s+/g, ' ').trim(); return x.length > 90 ? x.slice(0, 87) + '…' : x; };
+  const telStatus = st => verbeterpunten.filter(v => v.status === st).length;
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <div>
+          <h1 className="text-2xl font-light text-ink">Evaluaties</h1>
+          <p className="text-sm text-slate-500">Hoe tevreden zijn opdrachtgevers, studenten en het onderwijs, en wat leren we ervan? Voor innovatietrajecten, LLO en challenges.</p>
+        </div>
+        <div className="ml-auto flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
+          {[['evaluaties', '⭐ Evaluaties'], ['verbeter', '🛠 Verbeterregister']].map(([w, l]) => (
+            <button key={w} type="button" onClick={() => setDeel(w)} aria-pressed={deel === w} className={'px-3 py-1.5 rounded-md text-sm ' + (deel === w ? 'bg-brand text-white' : 'text-slate-600 hover:bg-slate-50')}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      {deel === 'evaluaties' ? <>
+        <div className="bg-white rounded-xl border border-slate-200 p-4"><TevredenTabel lijst={zichtbaar} /></div>
+        <div className="flex flex-wrap gap-2 items-center">
+          <select value={fSoort} onChange={e => setFSoort(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"><option value="">Alle soorten</option>{EVAL_SOORTEN.map(x => <option key={x}>{x}</option>)}</select>
+          <select value={fWie} onChange={e => setFWie(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"><option value="">Tevredenheid van iedereen</option>{EVAL_WIE.map(x => <option key={x}>{x}</option>)}</select>
+          <span className="text-sm text-slate-400">{zichtbaar.length} van {alle.length}</span>
+          <button type="button" onClick={() => nieuweEvaluatie({})} className="ml-auto px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">+ Evaluatie</button>
+        </div>
+        {zichtbaar.length === 0
+          ? <p className="text-sm text-slate-400 bg-white rounded-xl border border-slate-200 p-6 text-center">Nog geen evaluaties in deze periode. Klik op <strong>+ Evaluatie</strong>, of gebruik de knop bij een traject, groep of contact.</p>
+          : <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100">
+            {zichtbaar.map(e => (
+              <div key={e.id} className="p-3 flex flex-wrap gap-x-4 gap-y-1 items-start">
+                <div className="w-24 shrink-0 text-sm text-slate-500">{e.datum ? CGT.datumDM(e.datum) + ' ' + e.datum.slice(0, 4) : '—'}</div>
+                <div className="flex-1 min-w-[220px]">
+                  <div className="text-sm"><Badge className="bg-slate-100 text-slate-700 border-slate-200">{e.soort}</Badge> <span className="text-slate-500">{e.perspectief}</span> · <span className="text-ink">{evaluatieOnderwerp(e, lookups)}</span></div>
+                  {e.goed && <div className="text-sm text-slate-600 mt-1">👍 {kort(e.goed)}</div>}
+                  {e.beter && <div className="text-sm text-slate-600 mt-0.5">🔧 {kort(e.beter)}</div>}
+                  {e.bron === 'groep' && <div className="text-xs text-slate-400 mt-0.5">Uit "Afronding" van de groep; aanpassen doe je daar.</div>}
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-lg font-semibold text-ink">{e.cijfer ? getalNL(e.cijfer) : '—'}<span className="text-xs text-slate-400 font-normal"> /5{e.aantal ? ' · ' + e.aantal + ' pers.' : ''}</span></div>
+                  <div className="flex gap-2 justify-end text-xs mt-1">
+                    {e.beter && <button type="button" onClick={() => setVerbeter({ titel: kort(e.beter), toelichting: e.beter, geldtVoor: VOOR_VAN_SOORT[e.soort] || 'Alles', evaluatieId: e.id })} className="text-brand hover:underline">→ Verbeterpunt</button>}
+                    {e.bron !== 'groep' && <button type="button" onClick={() => nieuweEvaluatie(e)} className="text-slate-500 hover:underline">Bewerken</button>}
+                    {e.bron !== 'groep' && <button type="button" onClick={() => { if (confirm('Deze evaluatie verwijderen?')) setEvaluaties(prev => prev.filter(x => x.id !== e.id)); }} className="text-rose-600 hover:underline">Verwijderen</button>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>}
+      </> : <>
+        <div className="flex flex-wrap gap-2 items-center">
+          {VERBETER_STATUS.map(st => <span key={st} className={'text-xs px-2 py-1 rounded-full border ' + STATUS_STIJL[st]}>{st}: {telStatus(st)}</span>)}
+        </div>
+        <div className="flex flex-wrap gap-2 items-center">
+          <select value={fStatus} onChange={e => setFStatus(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"><option value="nietklaar">Open en bezig</option><option value="">Alle statussen</option>{VERBETER_STATUS.map(x => <option key={x}>{x}</option>)}</select>
+          <select value={fVoor} onChange={e => setFVoor(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"><option value="">Voor alles</option>{VERBETER_VOOR.filter(x => x !== 'Alles').map(x => <option key={x}>{x}</option>)}</select>
+          <span className="text-sm text-slate-400">{punten.length} van {verbeterpunten.length}{mijn ? ' · alleen van ' + mijn : ''}</span>
+          <button type="button" onClick={() => setVerbeter({})} className="ml-auto px-3 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-branddark">+ Verbeterpunt</button>
+        </div>
+        {punten.length === 0
+          ? <p className="text-sm text-slate-400 bg-white rounded-xl border border-slate-200 p-6 text-center">Geen verbeterpunten met deze keuze. Maak er een met <strong>+ Verbeterpunt</strong>, of vanuit een evaluatie met <strong>→ Verbeterpunt</strong>.</p>
+          : <div className="space-y-2">
+            {punten.map(v => {
+              const bron = v.evaluatieId && alle.find(e => e.id === v.evaluatieId);
+              return (
+                <div key={v.id} className="bg-white rounded-xl border border-slate-200 p-3 flex flex-wrap gap-3 items-start">
+                  <div className="flex-1 min-w-[240px]">
+                    <div className="font-medium text-ink">{v.titel}</div>
+                    {v.toelichting && v.toelichting !== v.titel && <div className="text-sm text-slate-600 mt-0.5">{v.toelichting}</div>}
+                    {v.actie && <div className="text-sm text-slate-700 mt-1">➜ {v.actie}</div>}
+                    <div className="text-xs text-slate-400 mt-1">{[v.geldtVoor === 'Alles' ? 'Geldt voor alles' : 'Geldt voor ' + v.geldtVoor, v.eigenaar ? 'eigenaar ' + v.eigenaar : 'nog geen eigenaar', v.datum ? CGT.datumDM(v.datum) + ' ' + v.datum.slice(0, 4) : '', bron ? 'uit evaluatie: ' + evaluatieOnderwerp(bron, lookups) : ''].filter(Boolean).join(' · ')}</div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <select value={v.status} onChange={e => bewaarPunt({ ...v, status: e.target.value })} aria-label="Status" className={'text-xs rounded-lg border px-2 py-1 ' + STATUS_STIJL[v.status]}>{VERBETER_STATUS.map(x => <option key={x}>{x}</option>)}</select>
+                    <button type="button" onClick={() => setVerbeter(v)} className="text-xs text-slate-500 hover:underline">Bewerken</button>
+                    <button type="button" onClick={() => { if (confirm('Dit verbeterpunt verwijderen?')) setVerbeterpunten(prev => prev.filter(x => x.id !== v.id)); }} className="text-xs text-rose-600 hover:underline">Verwijderen</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>}
+      </>}
+      <Modal open={!!verbeter} onClose={() => setVerbeter(null)} title={verbeter && verbeter.id ? 'Verbeterpunt bewerken' : 'Nieuw verbeterpunt'}>
+        {verbeter && <VerbeterForm initial={verbeter} onSave={bewaarPunt} onCancel={() => setVerbeter(null)} />}
+      </Modal>
+    </div>
+  );
+}
+
 function PeriodeBalk({ periode, zetPeriode, groepen, trajecten, alleenMijn = false, zetAlleenMijn = () => {}, ik = '' }) {
   const keuzes = useMemo(() => periodeKeuzesVan(groepen, trajecten), [groepen, trajecten]);
   const nu = huidigSemesterNaam();
@@ -4283,6 +4487,7 @@ function GroepDetail({ groep, trajecten, checklistState, onZetChecklist, onUpdat
           {g.titel && <p className="text-slate-500">{g.titel}</p>}
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
+          <button onClick={() => nieuweEvaluatie({ soort: 'Innovatietraject', groepId: g.id, trajectId: g.trajectId || '', perspectief: 'Studenten' })} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50" title="Evaluatie van studenten, onderwijs of opdrachtgever vastleggen">+ Evaluatie</button>
           <button onClick={onEdit} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm hover:bg-branddark">Bewerken</button>
           <button onClick={onDelete} className="px-3 py-1.5 rounded-lg border border-rose-300 text-rose-600 text-sm hover:bg-rose-50">Verwijderen</button>
         </div>
@@ -4911,17 +5116,19 @@ function coreFromData(d) {
     groepen: Array.isArray(d.groepen) ? d.groepen : [],
     checklist: (d.checklist && typeof d.checklist === 'object') ? d.checklist : {},
     team: Array.isArray(d.team) ? d.team : [],
+    evaluaties: Array.isArray(d.evaluaties) ? d.evaluaties : [],
+    verbeterpunten: Array.isArray(d.verbeterpunten) ? d.verbeterpunten : [],
     feedback: Array.isArray(d.feedback) ? d.feedback : [],
   };
 }
 // stabiele string van de datasets (zónder vluchtige exportedAt) voor wijzigingsdetectie
 // feedback zit NIET in de hoofdbundel — die heeft een eigen koppelbaar bestand
 function coreString(c) {
-  return JSON.stringify([c.trajecten, c.contacten, c.uren, c.targets, c.groepen, c.checklist, c.team || []]);
+  return JSON.stringify([c.trajecten, c.contacten, c.uren, c.targets, c.groepen, c.checklist, c.team || [], c.evaluaties || [], c.verbeterpunten || []]);
 }
 function buildPayload(c) {
   return { app: 'Campus Gouda CRM', version: 4, exportedAt: new Date().toISOString(),
-    trajecten: c.trajecten, contacten: c.contacten, uren: c.uren, targets: c.targets, groepen: c.groepen, checklist: c.checklist, team: c.team || [] };
+    trajecten: c.trajecten, contacten: c.contacten, uren: c.uren, targets: c.targets, groepen: c.groepen, checklist: c.checklist, team: c.team || [], evaluaties: c.evaluaties || [], verbeterpunten: c.verbeterpunten || [] };
 }
 // --- los feedbackbestand (crm-feedback.json) ---
 function feedbackUitData(d) { return (d && Array.isArray(d.feedback)) ? d.feedback : (Array.isArray(d) ? d : []); }
@@ -5140,7 +5347,7 @@ function semestersVanTraject(t) {
 const CIJFER_UURTARIEF = 100;
 const ONBEKEND = '(onbekend)';
 
-function berekenCijfers({ trajecten = [], contacten = [], groepen = [], uren = [] }, periode) {
+function berekenCijfers({ trajecten = [], contacten = [], groepen = [], uren = [], evaluaties = [], verbeterpunten = [] }, periode) {
   const vandaag = CGT.vandaagISO();
   const orgNaam = new Map();
   const org = n => { const k = normaliseerOrg(n); if (!k || k === 'campusgouda') return ''; if (!orgNaam.has(k)) orgNaam.set(k, String(n).trim()); return k; };
@@ -5188,13 +5395,16 @@ function berekenCijfers({ trajecten = [], contacten = [], groepen = [], uren = [
   gesprekken.forEach(({ i }) => (i.kansen || []).forEach(k => { kansen[k] = (kansen[k] || 0) + 1; }));
   const urenTot = urenP.reduce((n, r) => n + urenTotaal(r), 0);
   const perCat = UREN_CATS.map(c => ({ label: c.label, waarde: urenP.reduce((n, r) => n + (parseFloat(r[c.key]) || 0), 0) }));
-  const tevreden = plan.filter(x => x.g.evaluatie && x.g.evaluatie.tevredenheid && inPeriode(x.p.eindDatum, periode)).map(x => ({ x, t: Number(x.g.evaluatie.tevredenheid) }));
+  // tevredenheid: alle evaluaties met een cijfer in de periode (ook die van opdrachtgevers bij "Afronding" van een groep)
+  const evaluatiesP = alleEvaluaties(evaluaties, groepen).filter(e => inPeriode(e.datum, periode));
+  const tevreden = evaluatiesP.filter(e => e.cijfer).map(e => ({ e, t: Number(e.cijfer) }));
+  const verbeter = { open: verbeterpunten.filter(v => v.status === 'Open').length, bezig: verbeterpunten.filter(v => v.status === 'Bezig').length, klaar: verbeterpunten.filter(v => v.status === 'Doorgevoerd' && inPeriode(v.datum, periode)).length };
   const perSem = new Map(); plan.forEach(x => { const k = semSleutel(semesterVan(x.start)); if (k) perSem.set(k, (perSem.get(k) || 0) + (x.g.studenten || []).length); });
   const semReeks = [...perSem.keys()].sort().slice(-5);
   if (!semReeks.includes(semSleutel(komend))) semReeks.push(semSleutel(komend));
 
   return {
-    partners, actief, groepenP, trajectenP, urenP, gesprekken, kansen, perCat, tevreden, feiten,
+    partners, actief, groepenP, trajectenP, urenP, gesprekken, kansen, perCat, tevreden, evaluatiesP, verbeter, feiten,
     studenten: telStud(groepenP), komend, komendeGroepen, komendStudenten: telStud(komendeGroepen),
     lopend: groepenP.filter(x => x.start && x.start <= vandaag && !(x.p.eindDatum && x.p.eindDatum < vandaag)),
     afgerond: groepenP.filter(x => x.p.eindDatum && x.p.eindDatum < vandaag),
@@ -5211,7 +5421,7 @@ const CIJFER_PER = [['thema', 'Thema'], ['semester', 'Semester'], ['instelling',
 const CIJFER_BLOKKEN = [
   ['tegels', 'Kerncijfers'], ['partnersThema', 'Actieve partners per thema'], ['studentenSemester', 'Studenten per semester'],
   ['groepenStatus', 'Studentengroepen'], ['trajecten', 'Trajecten'], ['uren', 'Uren en bijdrage partners'], ['gesprekken', 'Gesprekken en kansen'],
-  ['instellingen', 'Per onderwijsinstelling'], ['tevredenheid', 'Tevredenheid en regio'], ['eigen', 'Eigen tabellen'],
+  ['instellingen', 'Per onderwijsinstelling'], ['tevredenheid', 'Tevredenheid en verbeterpunten'], ['regio', 'Partners per regio'], ['eigen', 'Eigen tabellen'],
 ];
 const LS_CIJFER_PERIODE = 'cgt_cijfers_periode', LS_CIJFER_BLOKKEN = 'cgt_cijfers_blokken', LS_CIJFER_TABELLEN = 'cgt_cijfers_tabellen';
 const getal = n => (Math.round(n * 10) / 10).toLocaleString('nl-NL');
@@ -5241,7 +5451,7 @@ function kopieerTabel(titel, kolommen, rijen) {
   try { navigator.clipboard.writeText(tekst); } catch (e) { window.prompt('Kopieer de tabel:', tekst); }
 }
 
-function CijfersOverzicht({ trajecten, contacten, groepen, uren, werkperiode = '' }) {
+function CijfersOverzicht({ trajecten, contacten, groepen, uren, evaluaties = [], verbeterpunten = [], werkperiode = '' }) {
   const vandaag = CGT.vandaagISO();
   const huidig = semesterVan(vandaag);
   const [periode, setPeriode] = useState(() => loadLS(LS_CIJFER_PERIODE, { j: huidig.j, s: 0 }) || { j: huidig.j, s: 0 });
@@ -5261,7 +5471,7 @@ function CijfersOverzicht({ trajecten, contacten, groepen, uren, werkperiode = '
   const [lijst, setLijst] = useState(null); // { titel, regels }
   const [gekopieerd, setGekopieerd] = useState('');
 
-  const c = useMemo(() => berekenCijfers({ trajecten, contacten, groepen, uren }, periode), [trajecten, contacten, groepen, uren, periode]);
+  const c = useMemo(() => berekenCijfers({ trajecten, contacten, groepen, uren, evaluaties, verbeterpunten }, periode), [trajecten, contacten, groepen, uren, evaluaties, verbeterpunten, periode]);
   // schooljaren voor de keuzelijst: alleen realistische jaren (10 terug t/m 2 vooruit);
   // datums daarbuiten zijn bijna altijd tikfouten (bijv. 3035 i.p.v. 2025) en worden apart gemeld
   const { jaren, vreemd } = useMemo(() => {
@@ -5305,7 +5515,7 @@ function CijfersOverzicht({ trajecten, contacten, groepen, uren, werkperiode = '
         <Tegel label="Trajecten" waarde={c.trajectenP.length} sub={c.trajectenP.filter(t => t.status === 'Actief').length + ' actief'} onClick={() => toon('Trajecten, ' + periodeTekst, c.trajectenP.map(t => (t.titel || '—') + ' · ' + (t.thema || '') + ' · ' + (t.status || '')))} />
         <Tegel label="Uren partners" waarde={getal(c.urenTot)} sub={'≈ € ' + Math.round(c.bijdrage).toLocaleString('nl-NL') + ' bijdrage'} onClick={() => toon('Urenregels, ' + periodeTekst, c.urenP.map(r => (r.datum || '') + ' · ' + (r.organisatie || '') + ' · ' + getal(urenTotaal(r)) + ' uur' + (r.bron === 'gesprek' ? ' (uit gesprek)' : '')))} />
         <Tegel label="Gesprekken" waarde={c.gesprekken.length} sub={periodeTekst} onClick={() => toon('Gesprekken, ' + periodeTekst, c.gesprekken.map(({ c: k, i }) => (i.datum || '') + ' · ' + (k.naam || '') + ' (' + (k.organisatie || '') + ')'))} />
-        <Tegel label="Tevredenheid" waarde={c.tevreden.length ? getal(c.tevreden.reduce((n, x) => n + x.t, 0) / c.tevreden.length) + ' / 5' : '—'} sub={c.tevreden.length + ' evaluaties'} onClick={() => toon('Evaluaties opdrachtgevers', c.tevreden.map(({ x, t }) => (x.g.groepsnummer || '') + ' ' + (x.g.titel || '') + ' · ' + t + '/5'))} />
+        <Tegel label="Tevredenheid" waarde={c.tevreden.length ? getal(c.tevreden.reduce((n, x) => n + x.t, 0) / c.tevreden.length) + ' / 5' : '—'} sub={c.tevreden.length + ' evaluaties'} onClick={() => toon('Evaluaties met een cijfer', c.tevreden.map(({ e, t }) => e.soort + ' · ' + e.perspectief + ' · ' + evaluatieOnderwerp(e, { trajecten, groepen, contacten }) + ' · ' + getalNL(t) + '/5'))} />
         <Tegel label="Uit Midden-Holland" waarde={c.mhActief} sub={'van ' + c.actief.length + ' actieve partners'} onClick={() => toon('Actieve partners uit Midden-Holland', c.actief.filter(o => o.regio === 'Midden-Holland').map(o => o.naam))} />
       </div>
     ),
@@ -5351,9 +5561,18 @@ function CijfersOverzicht({ trajecten, contacten, groepen, uren, werkperiode = '
       </Kaart>
     ),
     tevredenheid: (
-      <Kaart titel="Tevredenheid en regio">
-        <Balken rijen={[1, 2, 3, 4, 5].map(n => ({ label: n + ' / 5', waarde: c.tevreden.filter(x => x.t === n).length }))} />
-        <div className="mt-3"><Balken rijen={groepeer(c.feiten.partners.filter((r, i, a) => true), 'regio')} /></div>
+      <Kaart titel="Tevredenheid en verbeterpunten">
+        <TevredenTabel lijst={c.evaluatiesP} />
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          <span className={'px-2 py-1 rounded-full border ' + STATUS_STIJL.Open}>Open verbeterpunten: {c.verbeter.open}</span>
+          <span className={'px-2 py-1 rounded-full border ' + STATUS_STIJL.Bezig}>Bezig: {c.verbeter.bezig}</span>
+          <span className={'px-2 py-1 rounded-full border ' + STATUS_STIJL.Doorgevoerd}>Doorgevoerd in deze periode: {c.verbeter.klaar}</span>
+        </div>
+      </Kaart>
+    ),
+    regio: (
+      <Kaart titel="Actieve partners per regio">
+        <Balken rijen={groepeer(c.feiten.partners, 'regio')} />
       </Kaart>
     ),
     eigen: (
@@ -5505,6 +5724,11 @@ function App() {
   const [groepen, setGroepen] = useState(() => loadLS(LS_GROEPEN, []) || []);
   const [checklist, setChecklist] = useState(() => loadLS(LS_CHECKLIST, {}) || {});
   const [team, setTeam] = useState(() => loadLS(LS_TEAM, []) || []);
+  const [evaluaties, setEvaluaties] = useState(() => loadLS(LS_EVALUATIES, []) || []);
+  const [verbeterpunten, setVerbeterpunten] = useState(() => loadLS(LS_VERBETERPUNTEN, []) || []);
+  // "+ Evaluatie" kan overal in de app worden aangeklikt; het formulier staat hier één keer
+  const [evalStart, setEvalStart] = useState(null);
+  useEffect(() => { const h = e => setEvalStart(e.detail || {}); window.addEventListener('cg-nieuwe-evaluatie', h); return () => window.removeEventListener('cg-nieuwe-evaluatie', h); }, []);
   vulTeamNamen(team);
   vulTeamLijsten(trajecten, team);
   const [teamOpen, setTeamOpen] = useState(false);
@@ -5537,7 +5761,7 @@ function App() {
   const mapRef = React.useRef(null);
   const schrijfTimer = React.useRef(null);
   const liveCoreRef = React.useRef(null);
-  liveCoreRef.current = { trajecten, contacten, uren, targets, groepen, checklist, team, feedback };
+  liveCoreRef.current = { trajecten, contacten, uren, targets, groepen, checklist, team, evaluaties, verbeterpunten, feedback };
   const nowHHMM = () => new Date().toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
 
   // seed contacten op basis van trajecten bij eerste run
@@ -5555,6 +5779,8 @@ function App() {
   useEffect(() => saveLS(LS_GROEPEN, groepen), [groepen]);
   useEffect(() => saveLS(LS_CHECKLIST, checklist), [checklist]);
   useEffect(() => saveLS(LS_TEAM, team), [team]);
+  useEffect(() => saveLS(LS_EVALUATIES, evaluaties), [evaluaties]);
+  useEffect(() => saveLS(LS_VERBETERPUNTEN, verbeterpunten), [verbeterpunten]);
   // "Jouw naam" in dezelfde schrijfwijze als in het team
   useEffect(() => {
     const mijn = loadLS(LS_MIJNNAAM, '');
@@ -5567,6 +5793,7 @@ function App() {
     const c = coreFromData(data);
     setTrajecten(c.trajecten); setContacten(c.contacten); setUren(c.uren);
     setTargets(c.targets); setGroepen(c.groepen); setChecklist(c.checklist); setTeam(c.team);
+    setEvaluaties(c.evaluaties); setVerbeterpunten(c.verbeterpunten);
   }
   function wieBenIk() {
     let id = loadLS('cgt_gebruikerid', '');
@@ -5746,13 +5973,13 @@ function App() {
   useEffect(() => {
     const sync = syncRef.current;
     if (!sync || syncStatus !== 'verbonden') return;
-    const n = sync.registreer({ trajecten, contacten, uren, targets, groepen, checklist, team });
+    const n = sync.registreer({ trajecten, contacten, uren, targets, groepen, checklist, team, evaluaties, verbeterpunten });
     if (!n) return;
     bewaarSyncStand();
     setSavingState('saving');
     clearTimeout(schrijfTimer.current);
     schrijfTimer.current = setTimeout(schrijfNu, 700);
-  }, [trajecten, contacten, uren, targets, groepen, checklist, team, syncStatus]);
+  }, [trajecten, contacten, uren, targets, groepen, checklist, team, evaluaties, verbeterpunten, syncStatus]);
 
   // wijzigingen van collega's ophalen
   useEffect(() => {
@@ -6017,6 +6244,7 @@ function App() {
             <TabBtn id="trajecten">Trajecten</TabBtn>
             <TabBtn id="contacten">Contacten</TabBtn>
             <TabBtn id="groepen">Studentengroepen</TabBtn>
+            <TabBtn id="evaluaties">Evaluaties</TabBtn>
             <TabBtn id="uren">Cijfers</TabBtn>
           </nav>
           {/* Synchronisatiestatus + opslag-menu rechtsboven */}
@@ -6173,6 +6401,14 @@ function App() {
             onOpenTraject={openTrajectFromContact} onOpenUrenOrg={openUrenForOrg}
           />
         )}
+        {tab === 'evaluaties' && (
+          <EvaluatiesTab evaluaties={evaluaties} setEvaluaties={setEvaluaties} verbeterpunten={verbeterpunten} setVerbeterpunten={setVerbeterpunten}
+            groepen={groepen} trajecten={trajecten} contacten={contacten} periode={periode} mijn={mijnAan ? ikFilter : ''} />
+        )}
+        <Modal open={!!evalStart} onClose={() => setEvalStart(null)} title={evalStart && evalStart.id ? 'Evaluatie bewerken' : 'Evaluatie vastleggen'} wide>
+          {evalStart && <EvaluatieForm initial={evalStart} trajecten={trajecten} groepen={groepen} contacten={contacten}
+            onSave={e => { setEvaluaties(prev => prev.some(x => x.id === e.id) ? prev.map(x => x.id === e.id ? e : x) : [...prev, e]); setEvalStart(null); }} onCancel={() => setEvalStart(null)} />}
+        </Modal>
         {tab === 'uren' && (
           <div className="flex gap-1 mb-4 rounded-lg border border-slate-200 bg-white p-1 w-fit">
             {[['overzicht', '📊 Overzicht'], ['uren', '⏱ Uren partners']].map(([w, l]) => (
@@ -6182,7 +6418,7 @@ function App() {
           </div>
         )}
         {tab === 'uren' && cijferDeel === 'overzicht' && (
-          <CijfersOverzicht trajecten={trajecten} contacten={contacten} groepen={groepen} uren={urenAlles} werkperiode={periode} />
+          <CijfersOverzicht trajecten={trajecten} contacten={contacten} groepen={groepen} uren={urenAlles} evaluaties={evaluaties} verbeterpunten={verbeterpunten} werkperiode={periode} />
         )}
         {tab === 'uren' && cijferDeel === 'uren' && (
           <UrenTab

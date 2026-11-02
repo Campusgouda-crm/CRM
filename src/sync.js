@@ -12,7 +12,7 @@
    ============================================================ */
 (function (root) {
   'use strict';
-  const KERN = ['trajecten', 'contacten', 'uren', 'targets', 'groepen', 'checklist', 'team'];
+  const KERN = ['trajecten', 'contacten', 'uren', 'targets', 'groepen', 'checklist', 'team', 'evaluaties', 'verbeterpunten'];
   const MAP_WIJZIGINGEN = 'crm-wijzigingen';
   const BASIS = 'crm-data.json';
   const VASTGELEGD = '_vastgelegd.json'; // in de map met wijzigingen; het oude CRM komt hier nooit aan
@@ -28,6 +28,7 @@
       uren: Array.isArray(d.uren) ? d.uren : [], targets: isObj(d.targets) ? d.targets : {},
       groepen: Array.isArray(d.groepen) ? d.groepen : [], checklist: isObj(d.checklist) ? d.checklist : {},
       team: Array.isArray(d.team) ? d.team : [],
+      evaluaties: Array.isArray(d.evaluaties) ? d.evaluaties : [], verbeterpunten: Array.isArray(d.verbeterpunten) ? d.verbeterpunten : [],
     };
   }
 
