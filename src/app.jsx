@@ -6230,7 +6230,9 @@ function App() {
     <div className="min-h-full flex flex-col">
       <header className="bg-white border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 pt-4 flex items-end gap-6">
-          <div className="flex items-center gap-3 pb-3">
+          {/* logo en naam: klik = terug naar home (Taken) */}
+          <button type="button" onClick={() => { setTab('taken'); window.scrollTo(0, 0); }} title="Naar home (Taken)" aria-label="Naar home (Taken)"
+            className="flex items-center gap-3 pb-3 text-left rounded-lg hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand">
             {THEME.logoUrl
               ? <img src={THEME.logoUrl} alt={THEME.orgName} className="h-10 w-10 rounded-lg object-cover border border-slate-200" />
               : <div className="h-10 w-10 rounded-lg bg-brandlight text-ink flex items-center justify-center font-bold tracking-tight">CG</div>}
@@ -6238,7 +6240,7 @@ function App() {
               <div className="font-semibold text-ink leading-tight">{THEME.orgName}</div>
               <div className="text-xs text-slate-500 leading-tight">CRM Innovatietrajecten · met taken</div>
             </div>
-          </div>
+          </button>
           <nav className="flex gap-6">
             <TabBtn id="taken">Taken{takenTeller > 0 && <span className="ml-1.5 text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-rose-500 text-white">{takenTeller}</span>}</TabBtn>
             <TabBtn id="trajecten">Trajecten</TabBtn>
