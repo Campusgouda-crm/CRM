@@ -3680,6 +3680,41 @@ const contactVanMij = (c, ik) => bevatIk(c.eigenaar, ik);
 const trajectVanMij = (t, ik) => bevatIk(t.senior, ik) || bevatIk(t.junior, ik);
 const groepVanMij = (g, ik) => { const r = cgRollenVan(g); return isIk(r.senior, ik) || isIk(r.junior, ik) || bevatIk(g.contactCG, ik); };
 
+// ---------- wekelijkse takenmail ----------
+const TAKENMAIL = 'crm-takenmail.json';
+const APP_ADRES = 'https://campusgouda-crm.github.io/CRM/';
+const escHtml = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// per collega met een mailadres: wat staat er open? (alleen collega's met minstens één open punt krijgen een mail)
+function maakTakenmail(team, groepen, checklist, vandaag) {
+  const actief = (groepen || []).filter(g => !g.gearchiveerd && inWerkperiode(groepSemester(g), huidigSemesterNaam()));
+  const alles = CGT.takenOverzicht(actief, checklist, vandaag);
+  const label = g => escHtml([g.groepsnummer, g.titel].filter(Boolean).join(' · '));
+  const kort = t => { const x = String(t || '').replace(/\s+/g, ' ').trim(); return x.length > 160 ? x.slice(0, 157) + '…' : x; };
+  const mails = [];
+  (team || []).forEach(p => {
+    const naam = String(p.naam || '').trim(), email = String(p.email || '').trim();
+    if (!naam || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return;
+    const berichten = voorJouVan(groepen || [], naam).filter(x => x.soort === 'bericht');
+    // opvolgingen: die voor jou zijn, of zonder "voor wie" bij een groep van jou
+    const opvolgen = alles.opvolgen.filter(x => x.taak.voor ? isIk(x.taak.voor, naam) : groepVanMij(x.groep, naam));
+    // dezelfde punten als bovenaan Taken: dringend, binnenkort, deze week en afronden
+    const sigs = alles.signalen.filter(x => !x.verborgen && !x.looptAl && HOOFDNIVEAUS.includes(x.niveau) && groepVanMij(x.groep, naam));
+    const aantal = berichten.length + opvolgen.length + sigs.length;
+    if (!aantal) return;
+    const blok = (titel, regels) => regels.length
+      ? '<h3 style="font-size:15px;color:#1A7754;margin:18px 0 6px">' + titel + ' (' + regels.length + ')</h3><ul style="margin:0;padding-left:20px">' + regels.map(r => '<li style="margin:3px 0">' + r + '</li>').join('') + '</ul>' : '';
+    const html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1f2937;max-width:640px">'
+      + '<p>Hoi ' + escHtml(naam) + ',</p><p>Dit staat er voor je open in het Campus Gouda CRM.</p>'
+      + blok('Berichten voor jou', berichten.map(x => '<b>' + label(x.g) + '</b>: ' + escHtml(x.b.door || '') + ' schreef: ' + escHtml(kort(x.b.tekst))))
+      + blok('Opvolgen', opvolgen.map(x => '<b>' + label(x.groep) + '</b>: ' + escHtml(kort(x.taak.tekst)) + (x.taak.door && !isIk(x.taak.door, naam) ? ' <span style="color:#6b7280">(van ' + escHtml(x.taak.door) + ')</span>' : '')))
+      + [['urgent', 'Dringend'], ['binnenkort', 'Binnenkort regelen'], ['dezeweek', 'Deze week'], ['afronden', 'Afronden']].map(([nv, kop]) => blok(kop, sigs.filter(x => x.niveau === nv).map(x => '<b>' + label(x.groep) + '</b>: ' + escHtml(x.titel) + (x.tekst ? '<br><span style="color:#6b7280;font-size:13px">' + escHtml(kort(x.tekst)) + '</span>' : '')))).join('')
+      + '<p style="margin-top:20px"><a href="' + APP_ADRES + '" style="color:#1A7754">Open het CRM</a></p>'
+      + '<p style="color:#6b7280;font-size:12px">Stand van ' + escHtml(CGT.datumDM ? CGT.datumDM(vandaag) : vandaag) + '. Je krijgt deze mail elke vrijdag, alleen als er iets openstaat. Je mailadres staat bij Team en rollen in het CRM.</p></div>';
+    mails.push({ naam, email, aantal, onderwerp: 'Je open taken in het Campus Gouda CRM (' + aantal + ')', html });
+  });
+  return mails;
+}
+
 function PeriodeBalk({ periode, zetPeriode, groepen, trajecten, alleenMijn = false, zetAlleenMijn = () => {}, ik = '' }) {
   const keuzes = useMemo(() => periodeKeuzesVan(groepen, trajecten), [groepen, trajecten]);
   const nu = huidigSemesterNaam();
@@ -4998,7 +5033,7 @@ function TeamBeheer({ team, onSave, onCancel, gegevens, onGelijktrekken }) {
   const zet = (id, k, v) => setRijen(prev => prev.map(r => r.id === id ? { ...r, [k]: v } : r));
   const voegToe = () => setRijen(prev => [...prev, { id: uid(), naam: '', rol: '' }]);
   const weg = (id) => setRijen(prev => prev.filter(r => r.id !== id));
-  const opslaan = () => onSave(sorteerTeam(rijen.map(r => ({ ...r, naam: String(r.naam || '').trim(), rol: String(r.rol || '').trim() })).filter(r => r.naam)), origineel);
+  const opslaan = () => onSave(sorteerTeam(rijen.map(r => ({ ...r, naam: String(r.naam || '').trim(), rol: String(r.rol || '').trim(), email: String(r.email || '').trim() })).filter(r => r.naam)), origineel);
   return (
     <div className="space-y-3">
       <AndereWijziging origineel={sorteerTeam(origineel)} huidig={sorteerTeam(team)} wat="het team" />
@@ -5009,12 +5044,14 @@ function TeamBeheer({ team, onSave, onCancel, gegevens, onGelijktrekken }) {
           <div key={r.id} className="flex flex-wrap gap-2 items-center">
             <div className="flex-1 min-w-[140px]"><input className={inputCls} value={r.naam} onChange={e => zet(r.id, 'naam', e.target.value)} placeholder="Naam" aria-label="Naam" /></div>
             <div className="flex-1 min-w-[190px]"><input className={inputCls} list="cg-team-rollen" value={r.rol} onChange={e => zet(r.id, 'rol', e.target.value)} placeholder="Rol (kies of typ)" aria-label="Rol" /></div>
+            <div className="flex-1 min-w-[200px]"><input className={inputCls} type="email" value={r.email || ''} onChange={e => zet(r.id, 'email', e.target.value)} placeholder="Werkmail (voor de takenmail)" aria-label="Mailadres" /></div>
             <button type="button" onClick={() => weg(r.id)} className="px-2 py-1 text-slate-400 hover:text-red-600" title="Verwijderen" aria-label={'Verwijder ' + (r.naam || 'persoon')}>✕</button>
           </div>
         ))}
       </div>
       <datalist id="cg-team-rollen">{TEAM_ROLLEN.map(x => <option key={x} value={x} />)}</datalist>
       <button type="button" onClick={voegToe} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">+ Persoon toevoegen</button>
+      <p className="text-xs text-slate-500">📧 <strong>Takenmail:</strong> wie hier een werkmail heeft, krijgt elke vrijdagochtend een mail met de eigen open taken (alleen als er iets openstaat). De app zet die mails klaar in <code>crm-takenmail.json</code> in de gedeelde map; een Power Automate-flow verstuurt ze.</p>
       {gegevens && onGelijktrekken && <NamenGelijktrekken team={team} gegevens={gegevens} onToepassen={onGelijktrekken} />}
       <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
         <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">Annuleren</button>
@@ -5573,6 +5610,19 @@ function App() {
     })();
     return () => { weg = true; if (url) URL.revokeObjectURL(url); };
   }, [syncStatus]);
+  // takenmail: kort na een wijziging (en elke dag opnieuw) de mails klaarzetten in de gedeelde map.
+  // Staat er al precies hetzelfde in (een collega was je voor), dan niet opnieuw schrijven.
+  const takenmailRef = React.useRef('');
+  async function leesTakenmail() {
+    if (TEST_MAP) { const r = await fetch(TEST_MAP.replace(/\/$/, '') + '/extra/' + TAKENMAIL, { cache: 'no-store' }); return r.ok ? r.json() : null; }
+    const map = mapRef.current; if (!map) return null;
+    try { const f = await (await map.getFileHandle(TAKENMAIL)).getFile(); return JSON.parse(await f.text()); } catch (e) { return null; }
+  }
+  async function schrijfTakenmail(tekst) {
+    if (TEST_MAP) { await fetch(TEST_MAP.replace(/\/$/, '') + '/extra/' + TAKENMAIL, { method: 'PUT', body: tekst }); return; }
+    const map = mapRef.current; if (!map) return;
+    const fh = await map.getFileHandle(TAKENMAIL, { create: true }); const w = await fh.createWritable(); await w.write(tekst); await w.close();
+  }
   function bewaarSyncStand() {
     const sy = syncRef.current;
     if (sy && sy.s && sy.s.laatsteKern) saveLS(LS_SYNC_STAND, { map: syncMapRef.current, kern: sy.s.laatsteKern });
@@ -5617,6 +5667,23 @@ function App() {
     setSyncStatus('verbonden'); setLastSyncTime(nowHHMM());
     return true;
   }
+
+  useEffect(() => {
+    if (syncStatus !== 'verbonden') return;
+    const timer = setTimeout(async () => {
+      try {
+        const vandaag = CGT.vandaagISO();
+        const mails = maakTakenmail(team, groepen, checklist, vandaag);
+        const kern = JSON.stringify({ vandaag, mails });
+        if (kern === takenmailRef.current) return;
+        const bestaand = await leesTakenmail();
+        if (bestaand && JSON.stringify({ vandaag: bestaand.vandaag, mails: bestaand.mails }) === kern) { takenmailRef.current = kern; return; }
+        await schrijfTakenmail(JSON.stringify({ app: 'Campus Gouda CRM takenmail', versie: 1, vandaag, bijgewerkt: new Date().toISOString(), door: mijnNaam(), mails }, null, 1));
+        takenmailRef.current = kern;
+      } catch (e) { console.warn('Takenmail niet bijgewerkt; volgende keer opnieuw.', e); }
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, [syncStatus, team, groepen, checklist]);
 
   // opstart: eerder gekoppelde map opnieuw gebruiken
   useEffect(() => {

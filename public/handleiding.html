@@ -72,6 +72,7 @@ section { display: flex; flex-direction: column; gap: 14px; }
 .stap .inhoud { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding-bottom: 8px; }
 .stap + .stap { border-top: 1px solid var(--rand); padding-top: 28px; }
 .waarom { color: var(--zacht); }
+pre.schema { font-family: var(--mono); font-size: 12.5px; background: var(--vlak); border: 1px solid var(--rand); border-radius: 8px; padding: 12px 14px; overflow-x: auto; white-space: pre; margin: 0; }
 ol, ul { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
 li::marker { color: var(--accent); font-weight: 700; }
 .os { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
@@ -198,6 +199,8 @@ td:first-child { font-weight: 600; width: 40%; }
       <dd>In de filters staat elke collega los, dus niet als combinatie van twee namen. Kies je een naam, dan zie je alles waar die collega bij hoort, ook als er twee namen bij staan. Bij <strong>Trajecten</strong> zoek je met <strong>Alle collega's (senior/junior)</strong> alle trajecten waar iemand senior of junior is. Bij <strong>Studentengroepen</strong> doe je hetzelfde met <strong>Alle CG-contacten</strong>.</dd>
       <dt>Senior, junior en docent bij een groep</dt>
       <dd>Bij <strong>Bewerken</strong> van een groep kies je de <strong>Senior Campus Gouda</strong> en de <strong>Junior Campus Gouda</strong>. De keuzes komen uit <strong>Team en rollen</strong>. Stonden er eerder namen bij een groep, dan zet de app ze vanzelf in het goede vak. Bij <strong>Docentbegeleider</strong> typ je een deel van de naam; de app stelt namen uit Contacten voor, eerst van de onderwijsinstelling van de groep. Kies je er een, dan vult de app het mailadres in. Staat de docent niet in Contacten, vul het mailadres dan zelf in.</dd>
+      <dt>Takenmail op vrijdag</dt>
+      <dd>Elke vrijdagochtend krijg je een mail met wat er voor jou openstaat: berichten waarin je getagd bent, opvolgingen, en wat er bij jouw groepen moet gebeuren (dringend, binnenkort, deze week en afronden). Staat er niets open, dan krijg je geen mail. Je krijgt de mail alleen als bij <strong>⚙ Opslag → 👥 Team en rollen</strong> je werkmail staat. De mail laat de stand zien van de laatste keer dat iemand de app gebruikte.</dd>
       <dt>Berichten en taggen</dt>
       <dd>Rechts op de pagina van een groep staat <strong>Berichten</strong>. Schrijf een kort bericht en tag een collega met <strong>@naam</strong> (of klik op een van de @-knoppen). Druk op Enter om te versturen. Wie getagd is, ziet het bericht bij <strong>Taken</strong> onder <strong>Voor jou</strong>, en het telt mee in het rode getal op het tabblad. Klikt die op <strong>Gezien</strong>, dan zie jij "✓ gezien" onder je bericht.</dd>
       <dt>Opvolging voor een collega</dt>
@@ -242,6 +245,45 @@ td:first-child { font-weight: 600; width: 40%; }
       </table>
     </div>
     <p>Werkt het daarna nog niet, schrijf dan op wat je deed, wat je zag en hoe laat, en geef dat door aan de beheerder van het CRM.</p>
+  </section>
+
+  <section aria-labelledby="takenmail">
+    <h2 id="takenmail">Voor de beheerder: de takenmail instellen</h2>
+    <p class="waarom">De app kan zelf geen mail versturen. Hij zet de mails wel klaar in <code>crm-takenmail.json</code> in de CRM-map, elke dag opnieuw zodra iemand de app gebruikt. Een flow in Power Automate leest dat bestand op vrijdag en verstuurt de mails vanuit jouw Outlook. De gegevens blijven zo binnen Microsoft 365 van de gemeente. Dit doe je één keer; reken op een kwartier.</p>
+    <ol>
+      <li>Vul bij <strong>⚙ Opslag → 👥 Team en rollen</strong> de werkmail van elke collega in. Begin eventueel alleen met je eigen adres om te testen. Open daarna de app een keer en wacht een halve minuut, zodat <code>crm-takenmail.json</code> in de CRM-map verschijnt.</li>
+      <li>Ga naar <strong>make.powerautomate.com</strong> en log in met je gemeenteaccount. Lukt dat niet of mag je geen flows maken, dan moet IT Power Automate voor je openzetten.</li>
+      <li>Kies <strong>+ Maken → Geplande cloudstroom</strong> (Scheduled cloud flow). Naam: <em>CRM takenmail</em>. Begin: aanstaande vrijdag om 08:00. Herhalen: elke <strong>1 week</strong>, op <strong>vrijdag</strong>. Klik op <strong>Maken</strong>.</li>
+      <li>Open de stap <strong>Terugkeerpatroon</strong> (Recurrence) en zet de tijdzone op <strong>(UTC+01:00) Amsterdam</strong>, uur <strong>8</strong>, minuten <strong>0</strong>.</li>
+      <li>Voeg een stap toe: <strong>SharePoint → Bestandsinhoud ophalen via pad</strong> (Get file content using path). Kies bij <strong>Siteadres</strong> de site waar de CRM-map staat; dat is de site die je ziet als je de map in SharePoint opent (in de adresbalk tot en met de naam na <em>sites</em>). Klik bij <strong>Bestandspad</strong> op het mapje en kies <code>crm-takenmail.json</code> in de CRM-map.</li>
+      <li>Voeg een stap toe: <strong>Gegevensbewerking → JSON parseren</strong> (Parse JSON). Kies bij <strong>Inhoud</strong> de dynamische waarde <strong>Bestandsinhoud</strong> (File Content). Plak bij <strong>Schema</strong> dit:
+<pre class="schema">{
+  "type": "object",
+  "properties": {
+    "vandaag": { "type": "string" },
+    "bijgewerkt": { "type": "string" },
+    "mails": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "naam": { "type": "string" },
+          "email": { "type": "string" },
+          "aantal": { "type": "integer" },
+          "onderwerp": { "type": "string" },
+          "html": { "type": "string" }
+        },
+        "required": ["email", "onderwerp", "html"]
+      }
+    }
+  }
+}</pre></li>
+      <li>Voeg een stap toe: <strong>Toepassen op elke</strong> (Apply to each) en kies als invoer de dynamische waarde <strong>mails</strong>.</li>
+      <li>Voeg daarbinnen een actie toe: <strong>Office 365 Outlook → Een e-mail verzenden (V2)</strong> (Send an email V2). Vul in: <strong>Aan</strong> = <em>email</em>, <strong>Onderwerp</strong> = <em>onderwerp</em>, <strong>Hoofdtekst</strong> = <em>html</em> (allemaal dynamische waarden uit JSON parseren).</li>
+      <li>Klik op <strong>Opslaan</strong> en daarna op <strong>Testen → Handmatig</strong>. Controleer je eigen mailbox.</li>
+    </ol>
+    <p class="letop">Geeft de test bij <strong>JSON parseren</strong> een fout waarin <code>$content</code> staat? Zet dan bij <strong>Inhoud</strong> deze expressie (via <strong>Expressie</strong> of <strong>fx</strong>): <code>json(base64ToString(body('Bestandsinhoud_ophalen_via_pad')?['$content']))</code>. Heet jouw stap anders, vervang dan die naam; spaties worden een liggend streepje.</p>
+    <p class="waarom">Goed om te weten: de mails gaan uit vanaf het account van wie de flow maakt. Voeg een collega toe als mede-eigenaar van de flow, zodat hij blijft werken als jij er niet bent. Heeft niemand de app sinds vorige week geopend, dan bevat de mail de stand van toen; de datum staat onderaan de mail.</p>
   </section>
 
   <section aria-labelledby="privacy">
