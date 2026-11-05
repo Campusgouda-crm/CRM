@@ -762,7 +762,7 @@ function tagList(str) {
   return (str || '').split(',').map(s => s.trim()).filter(Boolean);
 }
 
-function TrajectDetail({ traject, contacten, groepen = [], onOpenGroep, onToggleArchief, onEdit, onDelete, onBack, onOpenContact, stand, periode = '*', onWijzig }) {
+function TrajectDetail({ traject, contacten, groepen = [], onOpenGroep, onToggleArchief, onEdit, onDelete, onBack, onOpenContact, stand, periode = '*', onWijzig, match }) {
   const t = traject;
   const gekoppeld = contacten.filter(c => (c.trajectIds || []).includes(t.id));
   const collega = contacten.find(c => c.id === t.interneCollegaId);
@@ -800,7 +800,7 @@ function TrajectDetail({ traject, contacten, groepen = [], onOpenGroep, onToggle
         </div>
       </div>
 
-      {stand && onWijzig && <UitzetBlok t={t} s={stand} periode={periode} contacten={contacten} onWijzig={onWijzig} />}
+      {stand && onWijzig && <UitzetBlok t={t} s={stand} periode={periode} contacten={contacten} onWijzig={onWijzig} match={match} />}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl border border-slate-200 p-4">
           <Row label="Aantal studenten" value={t.lead} />
@@ -889,7 +889,7 @@ function TrajectDetail({ traject, contacten, groepen = [], onOpenGroep, onToggle
 /* ============================================================
    TRAJECTEN-TAB
    ============================================================ */
-function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, contacten, groepen = [], onCreateContact, onOpenContact, onOpenGroep, externalDetail, clearExternal }) {
+function TrajectenTab({ periode = '*', mijn = '', targets = {}, setTargets, trajecten, setTrajecten, contacten, groepen = [], onCreateContact, onOpenContact, onOpenGroep, externalDetail, clearExternal }) {
   const [view, setView] = useState('lijst'); // lijst | kanban
   const [detailId, setDetailId] = useState(null);
   const [dragId, setDragId] = useState(null);       // traject dat gesleept wordt
@@ -942,6 +942,14 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
   const mijnTrajectIds = useMemo(() => new Set(mijn ? groepen.filter(g => g.trajectId && groepVanMij(g, mijn)).map(g => g.trajectId) : []), [groepen, mijn]);
   const gekoppeldPerTraject = useMemo(() => gekoppeldPerTrajectVan(groepen, periode), [groepen, periode]);
   const standen = useMemo(() => new Map(trajecten.map(t => [t.id, vergeefStand(t, gekoppeldPerTraject.get(t.id) || 0, periode)])), [trajecten, gekoppeldPerTraject, periode]);
+  const match = useMemo(() => matchTelling(trajecten, standen, periode, targets), [trajecten, standen, periode, targets]);
+  function wijzigStreef() {
+    const v = prompt(`Streefgetal gematchte trajecten voor ${periode}:`, String(match.streef));
+    if (v == null) return;
+    const n = parseInt(v, 10);
+    if (!(n > 0)) { alert('Vul een getal groter dan 0 in.'); return; }
+    setTargets && setTargets(prev => ({ ...prev, matchStreef: { ...((prev || {}).matchStreef || {}), [periode]: String(n) } }));
+  }
   const voorVergeef = useMemo(() => {
     const q = zoek.trim().toLowerCase();
     return trajecten.filter(t => {
@@ -1211,7 +1219,7 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
       <div>
         <TrajectDetail
           traject={detail} contacten={contacten} groepen={groepen}
-          stand={standen.get(detail.id)} periode={periode}
+          stand={standen.get(detail.id)} periode={periode} match={match}
           onWijzig={(fn) => setTrajecten(prev => prev.map(t => t.id === detail.id ? fn(t) : t))}
           onOpenGroep={onOpenGroep} onToggleArchief={toggleArchief}
           onBack={() => setDetailId(null)}
@@ -1355,7 +1363,7 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
       </div>
       <div className="order-1 xl:order-2">
         <UitzetOverzicht lijst={voorVergeef} standen={standen} periode={periode} filter={fVergeef} zetFilter={setFVergeef}
-          onOpen={(id) => setDetailId(id)} onMarkeerUitgezet={markeerUitgezet} />
+          onOpen={(id) => setDetailId(id)} onMarkeerUitgezet={markeerUitgezet} match={match} onWijzigStreef={wijzigStreef} />
       </div>
       </div>
 
@@ -3717,6 +3725,21 @@ const VERGEEF_STANDEN = [
 ];
 const VERGEEF_STAND = Object.fromEntries(VERGEEF_STANDEN.map(x => [x.id, x]));
 const OPTIE_OUD_DAGEN = 14;
+// Streefgetal: hoeveel trajecten we per semester willen matchen. Staat in de gedeelde gegevens (targets.matchStreef).
+const MATCH_STREEF_STANDAARD = 36;
+const matchStreefVan = (targets, p) => { if (allePeriodes(p)) return 0; const v = parseInt(((targets || {}).matchStreef || {})[p], 10); return v > 0 ? v : MATCH_STREEF_STANDAARD; };
+// gematcht = er is minstens één groep aan beloofd (optie, definitief of gekoppelde groep)
+function matchTelling(trajecten, standen, p, targets) {
+  const inP = trajecten.filter(t => trajectInPeriode(t, p) && standen.get(t.id));
+  const definitief = inP.filter(t => standen.get(t.id).definitief > 0).length;
+  const gematcht = inP.filter(t => standen.get(t.id).beloofd > 0).length;
+  return { streef: matchStreefVan(targets, p), definitief, optie: gematcht - definitief, gematcht };
+}
+// vraag bij een nieuwe match boven het streefgetal; geeft true als het mag
+function streefVraag(m, wat) {
+  if (!m || !m.streef || m.gematcht + 1 <= m.streef) return true;
+  return confirm(`Streefgetal bereikt.\n\nHet streefgetal is ${m.streef} gematchte trajecten in deze periode. Er zijn er al ${m.gematcht}; ${wat} worden het er ${m.gematcht + 1}.\n\nGa je hier bewust overheen? Kies OK om door te gaan, of Annuleren.`);
+}
 const plekkenIngesteld = t => parseInt(t && t.plekken, 10) > 0;
 const plekkenVan = (t, gekoppeld) => plekkenIngesteld(t) ? parseInt(t.plekken, 10) : Math.max(1, gekoppeld || 0);
 const groepenVanToewijzing = x => { const n = parseInt(x && x.groepen, 10); return n > 0 ? n : 1; };
@@ -3749,7 +3772,31 @@ function VergeefBadge({ s, klein }) {
 }
 
 // Zijpaneel bij Trajecten: hoeveel is uitgezet, vergeven en nog vrij. Klik op een regel = filter.
-function UitzetOverzicht({ lijst, standen, periode, filter, zetFilter, onOpen, onMarkeerUitgezet }) {
+function StreefBlok({ m, onWijzigStreef }) {
+  if (!m.streef) return <p className="text-xs text-slate-400">Kies bovenaan een semester om het streefgetal voor gematchte trajecten te zien.</p>;
+  const pct = n => Math.min(100, n / Math.max(m.streef, m.gematcht) * 100) + '%';
+  const boven = m.gematcht - m.streef;
+  return (
+    <div className={'rounded-lg border p-3 ' + (boven > 0 ? 'border-violet-300 bg-violet-50' : boven === 0 ? 'border-brand/40 bg-brandlight' : 'border-slate-200')}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Streefgetal</span>
+        <button type="button" onClick={onWijzigStreef} className="text-[11px] text-slate-400 underline" title="Streefgetal voor deze periode aanpassen">aanpassen</button>
+      </div>
+      <div className="text-2xl font-light text-ink tabular-nums">{m.gematcht}<span className="text-sm text-slate-400"> van {m.streef} gematcht</span></div>
+      <div className="relative flex h-2.5 rounded-full overflow-hidden bg-slate-100 border border-slate-200 mt-1" role="img" aria-label={`${m.definitief} definitief en ${m.optie} in optie gematcht, streefgetal ${m.streef}`}>
+        <div className="bg-brand" style={{ width: pct(m.definitief) }} />
+        <div className="bg-amber-400" style={{ width: pct(m.optie) }} />
+        {boven > 0 && <div className="absolute top-0 bottom-0 w-0.5 bg-violet-700" style={{ left: (m.streef / m.gematcht * 100) + '%' }} />}
+      </div>
+      <div className="text-[11px] text-slate-500 mt-1">{m.definitief} definitief · {m.optie} in optie · hele periode</div>
+      {boven < 0 && <div className="text-xs text-slate-600 mt-1">Nog {-boven} te gaan</div>}
+      {boven === 0 && <div className="text-xs font-medium text-branddark mt-1">✓ Streefgetal gehaald. Een nieuwe match vraagt eerst om bevestiging.</div>}
+      {boven > 0 && <div className="text-xs font-medium text-violet-800 mt-1">{boven} boven het streefgetal (bewust)</div>}
+    </div>
+  );
+}
+
+function UitzetOverzicht({ lijst, standen, periode, filter, zetFilter, onOpen, onMarkeerUitgezet, match, onWijzigStreef }) {
   const tel = id => lijst.filter(t => standen.get(t.id).stand === id).length;
   const som = k => lijst.reduce((n, t) => n + standen.get(t.id)[k], 0);
   const plekken = som('plekken'), def = lijst.reduce((n, t) => n + Math.min(standen.get(t.id).definitief, standen.get(t.id).plekken), 0);
@@ -3771,8 +3818,10 @@ function UitzetOverzicht({ lijst, standen, periode, filter, zetFilter, onOpen, o
     <aside className="bg-white rounded-xl border border-slate-200 p-4 xl:sticky xl:top-4 space-y-4" aria-label="Overzicht uitzetten en vergeven">
       <div>
         <h3 className="font-semibold text-ink text-sm">Uitzetten en vergeven</h3>
-        <p className="text-xs text-slate-400">{allePeriodes(periode) ? 'Alle periodes' : periode} · volgt je filters</p>
+        <p className="text-xs text-slate-400">{allePeriodes(periode) ? 'Alle periodes' : periode}</p>
       </div>
+      {match && <StreefBlok m={match} onWijzigStreef={onWijzigStreef} />}
+      <p className="text-[11px] text-slate-400 -mb-2">Hieronder: volgt je filters</p>
       <div className="grid grid-cols-2 gap-2 text-center">
         <div className="rounded-lg bg-slate-50 py-2"><div className="text-2xl font-light text-ink tabular-nums">{uitgezet}<span className="text-sm text-slate-400">/{lijst.length}</span></div><div className="text-[11px] text-slate-500">trajecten uitgezet</div></div>
         <div className={'rounded-lg py-2 ' + (vrij ? 'bg-sky-50' : 'bg-slate-50')}><div className="text-2xl font-light text-ink tabular-nums">{vrij}</div><div className="text-[11px] text-slate-500">plekken nog vrij</div></div>
@@ -3826,7 +3875,7 @@ function UitzetOverzicht({ lijst, standen, periode, filter, zetFilter, onOpen, o
 }
 
 // Blok op de trajectpagina: plekken, uitgezet, en aan wie het traject is beloofd
-function UitzetBlok({ t, s, periode, contacten, onWijzig }) {
+function UitzetBlok({ t, s, periode, contacten, onWijzig, match }) {
   const [aan, setAan] = useState('');
   const [aantal, setAantal] = useState('1');
   const [soort, setSoort] = useState('optie');
@@ -3849,6 +3898,7 @@ function UitzetBlok({ t, s, periode, contacten, onWijzig }) {
     const nieuw = { id: uid(), aan: naam, groepen: Math.max(1, parseInt(aantal, 10) || 1), status: soort, semester: sem, datum: vandaag, door: ikVoorFilter(), notitie: notitie.trim() };
     const na = naNieuw([...(t.toewijzingen || []), nieuw]);
     if (na.teveel > s.teveel && !overboekVraag(na, 'Met deze toewijzing')) return;
+    if (s.beloofd === 0 && !streefVraag(match, 'met dit traject')) return;
     onWijzig(x => ({ ...x, uitgezetOp: x.uitgezetOp || vandaag, toewijzingen: [...(x.toewijzingen || []), nieuw] }));
     setAan(''); setAantal('1'); setSoort('optie'); setNotitie('');
   }
@@ -6661,6 +6711,7 @@ function App() {
         {tab === 'trajecten' && (
           <TrajectenTab
             trajecten={trajecten} setTrajecten={setTrajecten} contacten={contacten} periode={periode} mijn={mijnAan ? ikFilter : ''}
+            targets={targets} setTargets={setTargets}
             groepen={groepen} onCreateContact={createContact}
             onOpenContact={openContactFromTraject} onOpenGroep={openGroepFromTraject}
             externalDetail={pendingTrajectId} clearExternal={() => setPendingTrajectId(null)}
