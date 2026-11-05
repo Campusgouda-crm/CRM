@@ -166,7 +166,7 @@ const LS_TARGETS = 'cgt_uren_targets_v1';
 const LS_GROEPEN = 'cgt_groepen_v1';
 const LS_CHECKLIST = 'cgt_checklist_v1';
 const LS_TEAM = 'cgt_team_v1';
-const LS_EVALUATIES = 'cgt_evaluaties_v1', LS_VERBETERPUNTEN = 'cgt_verbeterpunten_v1';
+const LS_EVALUATIES = 'cgt_evaluaties_v1', LS_VERBETERPUNTEN = 'cgt_verbeterpunten_v1', LS_WEEKUREN = 'cgt_weekuren_v1';
 // laatste stand die gelijk was aan de gedeelde map (om wijzigingen van tussendoor niet kwijt te raken)
 const LS_SYNC_STAND = 'cgt_sync_stand_v1';
 const LS_FEEDBACK = 'cgt_feedback_v1';
@@ -5449,17 +5449,18 @@ function coreFromData(d) {
     team: Array.isArray(d.team) ? d.team : [],
     evaluaties: Array.isArray(d.evaluaties) ? d.evaluaties : [],
     verbeterpunten: Array.isArray(d.verbeterpunten) ? d.verbeterpunten : [],
+    weekuren: Array.isArray(d.weekuren) ? d.weekuren : [],
     feedback: Array.isArray(d.feedback) ? d.feedback : [],
   };
 }
 // stabiele string van de datasets (zónder vluchtige exportedAt) voor wijzigingsdetectie
 // feedback zit NIET in de hoofdbundel — die heeft een eigen koppelbaar bestand
 function coreString(c) {
-  return JSON.stringify([c.trajecten, c.contacten, c.uren, c.targets, c.groepen, c.checklist, c.team || [], c.evaluaties || [], c.verbeterpunten || []]);
+  return JSON.stringify([c.trajecten, c.contacten, c.uren, c.targets, c.groepen, c.checklist, c.team || [], c.evaluaties || [], c.verbeterpunten || [], c.weekuren || []]);
 }
 function buildPayload(c) {
   return { app: 'Campus Gouda CRM', version: 4, exportedAt: new Date().toISOString(),
-    trajecten: c.trajecten, contacten: c.contacten, uren: c.uren, targets: c.targets, groepen: c.groepen, checklist: c.checklist, team: c.team || [], evaluaties: c.evaluaties || [], verbeterpunten: c.verbeterpunten || [] };
+    trajecten: c.trajecten, contacten: c.contacten, uren: c.uren, targets: c.targets, groepen: c.groepen, checklist: c.checklist, team: c.team || [], evaluaties: c.evaluaties || [], verbeterpunten: c.verbeterpunten || [], weekuren: c.weekuren || [] };
 }
 // --- los feedbackbestand (crm-feedback.json) ---
 function feedbackUitData(d) { return (d && Array.isArray(d.feedback)) ? d.feedback : (Array.isArray(d) ? d : []); }
@@ -5782,6 +5783,168 @@ function kopieerTabel(titel, kolommen, rijen) {
   try { navigator.clipboard.writeText(tekst); } catch (e) { window.prompt('Kopieer de tabel:', tekst); }
 }
 
+// ---------- tijdsbesteding van het team ----------
+// Per persoon per week: uren per soort werk. Je ziet je eigen weken; van het team zie je alleen totalen,
+// en die pas als minstens TIJD_MIN_INVULLERS collega's hebben ingevuld, zodat niemand terug te rekenen is.
+const TIJD_SOORTEN = [
+  { id: 'challenges', label: 'Challenges', kleur: 'bg-amber-400' },
+  { id: 'innovatie', label: 'Innovatietrajecten', kleur: 'bg-brand' },
+  { id: 'llo', label: 'Leren in de praktijk (LLO)', kleur: 'bg-sky-500' },
+  { id: 'netwerk', label: 'Netwerk', kleur: 'bg-violet-500' },
+  { id: 'evenementen', label: 'Evenementen', kleur: 'bg-rose-400' },
+  { id: 'overig', label: 'Overig', kleur: 'bg-slate-400' },
+];
+const TIJD_MIN_INVULLERS = 3;
+const tijdGetal = v => { const n = parseFloat(String(v == null ? '' : v).replace(',', '.')); return n > 0 ? n : 0; };
+const tijdTotaal = w => TIJD_SOORTEN.reduce((n, x) => n + tijdGetal((w.uren || {})[x.id]), 0);
+const tijdId = (wie, maandag) => 'w-' + normNaam(wie).replace(/[^a-z0-9]+/g, '-') + '-' + maandag;
+const urenTekst = n => (Math.round(n * 10) / 10).toLocaleString('nl-NL');
+function weekNummer(iso) {
+  const d = new Date(iso + 'T00:00:00'); const dag = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - dag + 3); const eersteDo = new Date(d.getFullYear(), 0, 4);
+  return 1 + Math.round(((d - eersteDo) / 86400000 - 3 + ((eersteDo.getDay() + 6) % 7)) / 7);
+}
+const weekSemester = maandag => semNaam(semesterVan(CGT.addDays(maandag, 4)));
+function TijdBalk({ totalen }) {
+  const som = TIJD_SOORTEN.reduce((n, x) => n + (totalen[x.id] || 0), 0);
+  if (!som) return <div className="h-3 rounded-full bg-slate-100 border border-slate-200" />;
+  return (
+    <div className="flex h-3 rounded-full overflow-hidden border border-slate-200" role="img"
+      aria-label={TIJD_SOORTEN.map(x => x.label + ' ' + Math.round((totalen[x.id] || 0) / som * 100) + '%').join(', ')}>
+      {TIJD_SOORTEN.map(x => totalen[x.id] ? <div key={x.id} className={x.kleur} style={{ width: (totalen[x.id] / som * 100) + '%' }} title={x.label + ': ' + urenTekst(totalen[x.id]) + ' uur'} /> : null)}
+    </div>
+  );
+}
+function TijdTab({ weekuren = [], setWeekuren, periode = '*' }) {
+  const ik = ikVoorFilter();
+  const vandaag = CGT.vandaagISO();
+  const dezeWeek = CGT.maandagVan(vandaag);
+  const [maandag, setMaandag] = useState(dezeWeek);
+  const id = ik ? tijdId(ik, maandag) : '';
+  const mijn = weekuren.find(w => w.id === id);
+  const vorige = ik ? weekuren.find(w => w.id === tijdId(ik, CGT.addDays(maandag, -7))) : null;
+  function zet(velden) {
+    setWeekuren(prev => {
+      const oud = prev.find(w => w.id === id) || { id, wie: ik, maandag, uren: {}, notitie: '' };
+      const nieuw = { ...oud, ...velden, uren: { ...(oud.uren || {}), ...(velden.uren || {}) }, bijgewerkt: new Date().toISOString() };
+      return prev.some(w => w.id === id) ? prev.map(w => w.id === id ? nieuw : w) : [...prev, nieuw];
+    });
+  }
+  const zetUur = (soort, v) => zet({ uren: { [soort]: v } });
+  function wis() { if (confirm('De uren van deze week wissen?')) setWeekuren(prev => prev.filter(w => w.id !== id)); }
+  const mijnWeken = weekuren.filter(w => ik && isZelfde(w.wie, ik)).sort((a, b) => String(b.maandag).localeCompare(String(a.maandag))).slice(0, 8);
+
+  // teamtotaal in de gekozen periode
+  const inPeriodeW = weekuren.filter(w => w.maandag && inWerkperiode(weekSemester(w.maandag), periode) && tijdTotaal(w) > 0);
+  const invullers = new Set(inPeriodeW.map(w => normNaam(w.wie))).size;
+  const perWeek = [...new Set(inPeriodeW.map(w => w.maandag))].sort().reverse().map(m => {
+    const ws = inPeriodeW.filter(w => w.maandag === m);
+    const t = {}; TIJD_SOORTEN.forEach(x => t[x.id] = ws.reduce((n, w) => n + tijdGetal((w.uren || {})[x.id]), 0));
+    return { maandag: m, t, som: ws.reduce((n, w) => n + tijdTotaal(w), 0), invullers: new Set(ws.map(w => normNaam(w.wie))).size };
+  });
+  // alleen weken met genoeg invullers tellen mee, ook in het totaal: anders is één persoon terug te rekenen
+  const zichtbareWeken = perWeek.filter(w => w.invullers >= TIJD_MIN_INVULLERS);
+  const genoeg = zichtbareWeken.length > 0;
+  const totalen = {}; TIJD_SOORTEN.forEach(x => totalen[x.id] = zichtbareWeken.reduce((n, w) => n + w.t[x.id], 0));
+  const somTeam = TIJD_SOORTEN.reduce((n, x) => n + totalen[x.id], 0);
+  const pct = n => somTeam ? Math.round(n / somTeam * 100) + '%' : '—';
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] gap-6 items-start">
+      <section className="bg-white rounded-xl border border-slate-200 p-4" aria-label="Mijn week">
+        <h3 className="font-semibold text-ink text-sm">Mijn week</h3>
+        {!ik ? <p className="text-sm text-slate-500 mt-2">Vul eerst bij <strong>Taken</strong> je naam in. Dan weet de app wiens uren dit zijn.</p> : <>
+          <div className="flex items-center justify-between gap-2 mt-2 mb-3">
+            <button type="button" onClick={() => setMaandag(CGT.addDays(maandag, -7))} className="px-2 py-1 rounded-lg border border-slate-300 text-sm hover:bg-slate-50" aria-label="Vorige week">←</button>
+            <div className="text-center">
+              <div className="text-sm font-medium text-slate-800">Week {weekNummer(maandag)}{maandag === dezeWeek ? ' (deze week)' : ''}</div>
+              <div className="text-xs text-slate-400">{CGT.datumKort(maandag)} t/m {CGT.datumKort(CGT.addDays(maandag, 4))} · {ik}</div>
+            </div>
+            <button type="button" onClick={() => setMaandag(CGT.addDays(maandag, 7))} disabled={maandag >= dezeWeek} className="px-2 py-1 rounded-lg border border-slate-300 text-sm hover:bg-slate-50 disabled:opacity-30" aria-label="Volgende week">→</button>
+          </div>
+          <div className="space-y-2">
+            {TIJD_SOORTEN.map(x => (
+              <label key={x.id} className="flex items-center gap-3 text-sm">
+                <span className={'w-2.5 h-2.5 rounded-full shrink-0 ' + x.kleur} />
+                <span className="flex-1 text-slate-700">{x.label}</span>
+                <input type="number" min="0" step="0.5" inputMode="decimal" value={(mijn && mijn.uren && mijn.uren[x.id]) || ''} onChange={e => zetUur(x.id, e.target.value)}
+                  placeholder="0" aria-label={x.label + ' (uren)'} className="w-20 border border-slate-300 rounded-lg px-2 py-1 text-right" />
+                <span className="text-xs text-slate-400 w-6">uur</span>
+              </label>
+            ))}
+          </div>
+          <div className="flex items-center justify-between border-t border-slate-100 mt-3 pt-2 text-sm">
+            <span className="text-slate-500">Totaal</span><span className="font-semibold text-ink">{urenTekst(mijn ? tijdTotaal(mijn) : 0)} uur</span>
+          </div>
+          <div className="mt-2"><TijdBalk totalen={Object.fromEntries(TIJD_SOORTEN.map(x => [x.id, tijdGetal(mijn && mijn.uren && mijn.uren[x.id])]))} /></div>
+          <input value={(mijn && mijn.notitie) || ''} onChange={e => zet({ notitie: e.target.value })} placeholder="Notitie (optioneel), bijv. veel tijd naar de kick-off"
+            className="w-full mt-3 border border-slate-300 rounded-lg px-2 py-1.5 text-sm" />
+          <div className="flex flex-wrap gap-2 mt-3">
+            {maandag !== dezeWeek && <button type="button" onClick={() => setMaandag(dezeWeek)} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">Naar deze week</button>}
+            {vorige && !(mijn && tijdTotaal(mijn)) && <button type="button" onClick={() => zet({ uren: { ...(vorige.uren || {}) } })} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-50">Neem vorige week over</button>}
+            {mijn && <button type="button" onClick={wis} className="px-3 py-1.5 rounded-lg border border-rose-200 text-rose-600 text-sm hover:bg-rose-50">Week wissen</button>}
+          </div>
+          <p className="text-xs text-slate-400 mt-3">Grofweg is goed genoeg. Wat je typt, wordt meteen bewaard. Collega's zien jouw uren niet; ze tellen alleen mee in het teamtotaal.</p>
+          {mijnWeken.length > 0 && (
+            <div className="mt-4 border-t border-slate-100 pt-3">
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Mijn laatste weken</div>
+              {mijnWeken.map(w => (
+                <button key={w.id} type="button" onClick={() => setMaandag(w.maandag)} className={'w-full flex items-center gap-2 py-1 text-sm rounded hover:bg-slate-50 ' + (w.maandag === maandag ? 'font-medium' : '')}>
+                  <span className="w-16 text-left text-slate-600">Week {weekNummer(w.maandag)}</span>
+                  <span className="flex-1"><TijdBalk totalen={Object.fromEntries(TIJD_SOORTEN.map(x => [x.id, tijdGetal((w.uren || {})[x.id])]))} /></span>
+                  <span className="w-14 text-right tabular-nums text-slate-700">{urenTekst(tijdTotaal(w))} u</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </>}
+      </section>
+
+      <section className="bg-white rounded-xl border border-slate-200 p-4" aria-label="Tijdsbesteding team">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="font-semibold text-ink text-sm">Waar gaat de tijd van het team naartoe?</h3>
+          <span className="text-xs text-slate-400">{allePeriodes(periode) ? 'Alle periodes' : periode} · {invullers} collega{invullers === 1 ? '' : "'s"} ingevuld</span>
+        </div>
+        {!genoeg ? (
+          <p className="text-sm text-slate-500 mt-3 bg-slate-50 rounded-lg p-3">Het teamtotaal verschijnt zodra in een week minstens {TIJD_MIN_INVULLERS} collega's hun uren hebben ingevuld. Zo is niemands tijd terug te rekenen.</p>
+        ) : <>
+          <div className="mt-3"><TijdBalk totalen={totalen} /></div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
+            {TIJD_SOORTEN.map(x => (
+              <div key={x.id} className="rounded-lg border border-slate-200 p-2">
+                <div className="flex items-center gap-1.5 text-xs text-slate-500"><span className={'w-2 h-2 rounded-full ' + x.kleur} />{x.label}</div>
+                <div className="text-xl font-light text-ink tabular-nums">{pct(totalen[x.id])}</div>
+                <div className="text-[11px] text-slate-400">{urenTekst(totalen[x.id])} uur</div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-slate-500 mt-2">Samen {urenTekst(somTeam)} uur in {zichtbareWeken.length} week{zichtbareWeken.length === 1 ? '' : 'en'}.</p>
+          <div className="overflow-x-auto mt-4">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs text-slate-500"><tr>
+                <th className="py-1 pr-2 font-semibold">Week</th>
+                {TIJD_SOORTEN.map(x => <th key={x.id} className="py-1 px-1 font-semibold text-right" title={x.label}>{x.label.replace(' (LLO)', '').replace('Leren in de praktijk', 'LLO').replace('Innovatietrajecten', 'Innovatie')}</th>)}
+                <th className="py-1 pl-2 font-semibold text-right">Totaal</th>
+              </tr></thead>
+              <tbody>
+                {zichtbareWeken.map(w => (
+                  <tr key={w.maandag} className="border-t border-slate-100">
+                    <td className="py-1 pr-2 text-slate-600 whitespace-nowrap">Week {weekNummer(w.maandag)} <span className="text-xs text-slate-400">· {w.invullers}</span></td>
+                    {TIJD_SOORTEN.map(x => <td key={x.id} className="py-1 px-1 text-right tabular-nums text-slate-700">{w.t[x.id] ? urenTekst(w.t[x.id]) : '—'}</td>)}
+                    <td className="py-1 pl-2 text-right tabular-nums font-medium">{urenTekst(w.som)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {perWeek.length > zichtbareWeken.length && <p className="text-xs text-slate-400 mt-2">{perWeek.length - zichtbareWeken.length} week{perWeek.length - zichtbareWeken.length === 1 ? '' : 'en'} niet apart getoond: minder dan {TIJD_MIN_INVULLERS} invullers. Die tellen ook niet mee in het totaal.</p>}
+            <p className="text-xs text-slate-400 mt-1">Het getal achter de week is het aantal collega's dat die week invulde.</p>
+          </div>
+        </>}
+      </section>
+    </div>
+  );
+}
+
 function CijfersOverzicht({ trajecten, contacten, groepen, uren, evaluaties = [], verbeterpunten = [], werkperiode = '' }) {
   const vandaag = CGT.vandaagISO();
   const huidig = semesterVan(vandaag);
@@ -6057,6 +6220,7 @@ function App() {
   const [team, setTeam] = useState(() => loadLS(LS_TEAM, []) || []);
   const [evaluaties, setEvaluaties] = useState(() => loadLS(LS_EVALUATIES, []) || []);
   const [verbeterpunten, setVerbeterpunten] = useState(() => loadLS(LS_VERBETERPUNTEN, []) || []);
+  const [weekuren, setWeekuren] = useState(() => loadLS(LS_WEEKUREN, []) || []);
   // "+ Evaluatie" kan overal in de app worden aangeklikt; het formulier staat hier één keer
   const [evalStart, setEvalStart] = useState(null);
   useEffect(() => { const h = e => setEvalStart(e.detail || {}); window.addEventListener('cg-nieuwe-evaluatie', h); return () => window.removeEventListener('cg-nieuwe-evaluatie', h); }, []);
@@ -6092,7 +6256,7 @@ function App() {
   const mapRef = React.useRef(null);
   const schrijfTimer = React.useRef(null);
   const liveCoreRef = React.useRef(null);
-  liveCoreRef.current = { trajecten, contacten, uren, targets, groepen, checklist, team, evaluaties, verbeterpunten, feedback };
+  liveCoreRef.current = { trajecten, contacten, uren, targets, groepen, checklist, team, evaluaties, verbeterpunten, weekuren, feedback };
   const nowHHMM = () => new Date().toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
 
   // seed contacten op basis van trajecten bij eerste run
@@ -6112,6 +6276,7 @@ function App() {
   useEffect(() => saveLS(LS_TEAM, team), [team]);
   useEffect(() => saveLS(LS_EVALUATIES, evaluaties), [evaluaties]);
   useEffect(() => saveLS(LS_VERBETERPUNTEN, verbeterpunten), [verbeterpunten]);
+  useEffect(() => saveLS(LS_WEEKUREN, weekuren), [weekuren]);
   // "Jouw naam" in dezelfde schrijfwijze als in het team
   useEffect(() => {
     const mijn = loadLS(LS_MIJNNAAM, '');
@@ -6124,7 +6289,7 @@ function App() {
     const c = coreFromData(data);
     setTrajecten(c.trajecten); setContacten(c.contacten); setUren(c.uren);
     setTargets(c.targets); setGroepen(c.groepen); setChecklist(c.checklist); setTeam(c.team);
-    setEvaluaties(c.evaluaties); setVerbeterpunten(c.verbeterpunten);
+    setEvaluaties(c.evaluaties); setVerbeterpunten(c.verbeterpunten); setWeekuren(c.weekuren);
   }
   function wieBenIk() {
     let id = loadLS('cgt_gebruikerid', '');
@@ -6304,13 +6469,13 @@ function App() {
   useEffect(() => {
     const sync = syncRef.current;
     if (!sync || syncStatus !== 'verbonden') return;
-    const n = sync.registreer({ trajecten, contacten, uren, targets, groepen, checklist, team, evaluaties, verbeterpunten });
+    const n = sync.registreer({ trajecten, contacten, uren, targets, groepen, checklist, team, evaluaties, verbeterpunten, weekuren });
     if (!n) return;
     bewaarSyncStand();
     setSavingState('saving');
     clearTimeout(schrijfTimer.current);
     schrijfTimer.current = setTimeout(schrijfNu, 700);
-  }, [trajecten, contacten, uren, targets, groepen, checklist, team, evaluaties, verbeterpunten, syncStatus]);
+  }, [trajecten, contacten, uren, targets, groepen, checklist, team, evaluaties, verbeterpunten, weekuren, syncStatus]);
 
   // wijzigingen van collega's ophalen
   useEffect(() => {
@@ -6745,7 +6910,7 @@ function App() {
         </Modal>
         {tab === 'uren' && (
           <div className="flex gap-1 mb-4 rounded-lg border border-slate-200 bg-white p-1 w-fit">
-            {[['overzicht', '📊 Overzicht'], ['uren', '⏱ Uren partners']].map(([w, l]) => (
+            {[['overzicht', '📊 Overzicht'], ['uren', '⏱ Uren partners'], ['tijd', '🕒 Tijdsbesteding']].map(([w, l]) => (
               <button key={w} type="button" onClick={() => zetCijferDeel(w)} aria-pressed={cijferDeel === w}
                 className={'px-3 py-1.5 rounded-md text-sm ' + (cijferDeel === w ? 'bg-brand text-white' : 'text-slate-600 hover:bg-slate-50')}>{l}</button>
             ))}
@@ -6753,6 +6918,9 @@ function App() {
         )}
         {tab === 'uren' && cijferDeel === 'overzicht' && (
           <CijfersOverzicht trajecten={trajecten} contacten={contacten} groepen={groepen} uren={urenAlles} evaluaties={evaluaties} verbeterpunten={verbeterpunten} werkperiode={periode} />
+        )}
+        {tab === 'uren' && cijferDeel === 'tijd' && (
+          <TijdTab weekuren={weekuren} setWeekuren={setWeekuren} periode={periode} />
         )}
         {tab === 'uren' && cijferDeel === 'uren' && (
           <UrenTab
