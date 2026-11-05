@@ -655,6 +655,9 @@ function TrajectForm({ initial, contacten = [], onCreateContact, onSave, onCance
       <Field label="Aantal weken">
         <input className={inputCls} value={f.weken} onChange={set('weken')} placeholder="bijv. 20 of 7/10" />
       </Field>
+      <Field label="Plekken (hoeveel groepen kunnen dit oppakken)">
+        <input type="number" min="1" className={inputCls} value={f.plekken || ''} onChange={set('plekken')} placeholder="1" />
+      </Field>
       <Field label="Opleiding(en)">
         <input className={inputCls} value={f.opleidingen} onChange={set('opleidingen')} placeholder="bijv. ICT, Projectmanagement" />
       </Field>
@@ -759,7 +762,7 @@ function tagList(str) {
   return (str || '').split(',').map(s => s.trim()).filter(Boolean);
 }
 
-function TrajectDetail({ traject, contacten, groepen = [], onOpenGroep, onToggleArchief, onEdit, onDelete, onBack, onOpenContact }) {
+function TrajectDetail({ traject, contacten, groepen = [], onOpenGroep, onToggleArchief, onEdit, onDelete, onBack, onOpenContact, stand, periode = '*', onWijzig }) {
   const t = traject;
   const gekoppeld = contacten.filter(c => (c.trajectIds || []).includes(t.id));
   const collega = contacten.find(c => c.id === t.interneCollegaId);
@@ -797,6 +800,7 @@ function TrajectDetail({ traject, contacten, groepen = [], onOpenGroep, onToggle
         </div>
       </div>
 
+      {stand && onWijzig && <UitzetBlok t={t} s={stand} periode={periode} contacten={contacten} onWijzig={onWijzig} />}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl border border-slate-200 p-4">
           <Row label="Aantal studenten" value={t.lead} />
@@ -913,6 +917,8 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
   const [fDefinitief, setFDefinitief] = useState('');
   const [fStatus, setFStatus] = useState('');
   const [fArchief, setFArchief] = useState('actief'); // actief | gearchiveerd | alle
+  const [fVergeef, setFVergeef] = useState(''); // stand uit VERGEEF_STANDEN, of 'uitgezet'
+  const [wervingUitzetten, setWervingUitzetten] = useState(true);
 
   const contactById = useMemo(() => Object.fromEntries(contacten.map(c => [c.id, c])), [contacten]);
   const naamVan = (id) => (contactById[id] || {}).naam || '';
@@ -934,7 +940,9 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
 
   // ook "van mij": trajecten waar ik bij een studentengroep senior of junior ben
   const mijnTrajectIds = useMemo(() => new Set(mijn ? groepen.filter(g => g.trajectId && groepVanMij(g, mijn)).map(g => g.trajectId) : []), [groepen, mijn]);
-  const filtered = useMemo(() => {
+  const gekoppeldPerTraject = useMemo(() => gekoppeldPerTrajectVan(groepen, periode), [groepen, periode]);
+  const standen = useMemo(() => new Map(trajecten.map(t => [t.id, vergeefStand(t, gekoppeldPerTraject.get(t.id) || 0, periode)])), [trajecten, gekoppeldPerTraject, periode]);
+  const voorVergeef = useMemo(() => {
     const q = zoek.trim().toLowerCase();
     return trajecten.filter(t => {
       if (fArchief === 'actief' && t.gearchiveerd) return false;
@@ -954,6 +962,14 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
       return true;
     });
   }, [trajecten, zoek, fThema, fOpleiding, fContact, fCollega, fDefinitief, fStatus, periode, fArchief, contactById, mijn, mijnTrajectIds]);
+  const filtered = useMemo(() => !fVergeef ? voorVergeef
+    : voorVergeef.filter(t => fVergeef === 'uitgezet' ? standen.get(t.id).stand !== 'niet' : standen.get(t.id).stand === fVergeef), [voorVergeef, fVergeef, standen]);
+  function markeerUitgezet(ids) {
+    if (!ids.length) return;
+    if (!confirm(`${ids.length} traject(en) op "uitgezet" zetten met de datum van vandaag?`)) return;
+    const set = new Set(ids), vandaag = CGT.vandaagISO();
+    setTrajecten(prev => prev.map(t => set.has(t.id) && !t.uitgezetOp ? { ...t, uitgezetOp: vandaag } : t));
+  }
 
   const detail = trajecten.find(t => t.id === detailId);
 
@@ -1003,7 +1019,7 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
     downloadCSV(rows, 'campus-gouda-trajecten.csv');
   }
   function resetFilters() {
-    setZoek(''); setFThema(''); setFOpleiding(''); setFContact(''); setFCollega(''); setFDefinitief(''); setFStatus(''); setFArchief('actief');
+    setZoek(''); setFThema(''); setFOpleiding(''); setFContact(''); setFCollega(''); setFDefinitief(''); setFStatus(''); setFArchief('actief'); setFVergeef('');
   }
 
   // Werving-uitdraai openen: standaard alle nu-gefilterde trajecten geselecteerd
@@ -1014,6 +1030,7 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
   function genereerWerving() {
     const gekozen = trajecten.filter(t => wervingSel.includes(t.id));
     if (!gekozen.length) { alert('Selecteer minimaal één traject.'); return; }
+    if (wervingUitzetten) { const vandaag = CGT.vandaagISO(); setTrajecten(prev => prev.map(t => wervingSel.includes(t.id) && !t.uitgezetOp ? { ...t, uitgezetOp: vandaag } : t)); }
     const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const nl = (s) => esc(s).replace(/\n/g,'<br>');
     const datum = new Date().toLocaleDateString('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -1194,6 +1211,8 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
       <div>
         <TrajectDetail
           traject={detail} contacten={contacten} groepen={groepen}
+          stand={standen.get(detail.id)} periode={periode}
+          onWijzig={(fn) => setTrajecten(prev => prev.map(t => t.id === detail.id ? fn(t) : t))}
           onOpenGroep={onOpenGroep} onToggleArchief={toggleArchief}
           onBack={() => setDetailId(null)}
           onEdit={() => { setEditing(detail); setFormOpen(true); }}
@@ -1250,10 +1269,15 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
         <select value={fDefinitief} onChange={e=>setFDefinitief(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
           <option value="">Definitief: alle</option>{DEFINITIEF_OPTS.map(x=><option key={x}>{x}</option>)}
         </select>
+        <select value={fVergeef} onChange={e=>setFVergeef(e.target.value)} aria-label="Vergeven" className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+          <option value="">Vergeven: alle</option><option value="uitgezet">Alles wat is uitgezet</option>{VERGEEF_STANDEN.map(x=><option key={x.id} value={x.id}>{x.label}</option>)}
+        </select>
         <button onClick={resetFilters} className="text-sm text-slate-500 hover:text-slate-700 underline">Wissen</button>
         <span className="text-sm text-slate-400 ml-auto">{filtered.length} van {trajecten.length}</span>
       </div>
 
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_17rem] gap-4 items-start">
+      <div className="min-w-0 order-2 xl:order-1">
       {view === 'lijst' ? (
         <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
           <table className="w-full text-sm">
@@ -1262,6 +1286,7 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
                 <th className="px-3 py-2 font-semibold">Titel</th>
                 <th className="px-3 py-2 font-semibold">Thema</th>
                 <th className="px-3 py-2 font-semibold">Status</th>
+                <th className="px-3 py-2 font-semibold">Vergeven</th>
                 <th className="px-3 py-2 font-semibold">Studenten</th>
                 <th className="px-3 py-2 font-semibold">Opleiding</th>
                 <th className="px-3 py-2 font-semibold">Contact</th>
@@ -1275,6 +1300,7 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
                   <td className="px-3 py-2 font-medium text-slate-800">{t.titel}</td>
                   <td className="px-3 py-2"><Badge className={THEMA_KLEUR[t.thema]}>{t.thema}</Badge></td>
                   <td className="px-3 py-2"><Badge className={STATUS_KLEUR[t.status]}>{t.status}</Badge></td>
+                  <td className="px-3 py-2"><VergeefBadge s={standen.get(t.id)} klein /></td>
                   <td className="px-3 py-2">{t.lead || '—'}</td>
                   <td className="px-3 py-2 text-slate-600">{t.opleidingen || '—'}</td>
                   <td className="px-3 py-2 text-slate-600">{contactNaam(t) || '—'}</td>
@@ -1283,7 +1309,7 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan="8" className="px-3 py-8 text-center text-slate-400">Geen trajecten gevonden.</td></tr>
+                <tr><td colSpan="9" className="px-3 py-8 text-center text-slate-400">Geen trajecten gevonden.</td></tr>
               )}
             </tbody>
           </table>
@@ -1314,6 +1340,7 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
                         {t.lead && <Badge className="bg-slate-100 text-slate-600 border-slate-200">{t.lead} studenten</Badge>}
                       </div>
                       <div className="font-medium text-sm text-slate-800">{t.titel}</div>
+                      <div className="mt-1"><VergeefBadge s={standen.get(t.id)} klein /></div>
                       <div className="text-xs text-slate-500 mt-1">{t.partners}</div>
                       {contactNaam(t) && <div className="text-xs text-slate-400 mt-1">{contactNaam(t)}</div>}
                     </div>
@@ -1325,6 +1352,12 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
           })}
         </div>
       )}
+      </div>
+      <div className="order-1 xl:order-2">
+        <UitzetOverzicht lijst={voorVergeef} standen={standen} periode={periode} filter={fVergeef} zetFilter={setFVergeef}
+          onOpen={(id) => setDetailId(id)} onMarkeerUitgezet={markeerUitgezet} />
+      </div>
+      </div>
 
       <Modal open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }}
         title={editing && trajecten.some(t=>t.id===editing.id) ? 'Traject bewerken' : 'Nieuw traject'} wide>
@@ -1353,6 +1386,10 @@ function TrajectenTab({ periode = '*', mijn = '', trajecten, setTrajecten, conta
               </label>
             ))}
           </div>
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input type="checkbox" checked={wervingUitzetten} onChange={e => setWervingUitzetten(e.target.checked)} className="accent-brand" />
+            Zet deze trajecten op "uitgezet" (datum van vandaag)
+          </label>
           <div className="flex justify-between items-center pt-1">
             <span className="text-sm text-slate-400">{wervingSel.length} geselecteerd</span>
             <div className="flex gap-2">
@@ -3666,6 +3703,241 @@ function beginPeriode() { try { return sessionStorage.getItem(SS_PERIODE) || hui
 const allePeriodes = p => !p || p === '*';
 const inWerkperiode = (sem, p) => allePeriodes(p) || (sem ? sem === p : p === huidigSemesterNaam());
 const trajectInPeriode = (t, p) => allePeriodes(p) || ((t.semesters || []).length ? t.semesters.includes(p) : p === huidigSemesterNaam());
+// ---------- uitzetten en vergeven van trajecten ----------
+// Plekken = hoeveel groepen een traject kunnen oppakken. Niet ingevuld: 1, of zoveel groepen als er al gekoppeld zijn.
+// Toewijzingen = aan wie het traject is beloofd: als optie (misschien) of definitief.
+// Gekoppelde studentengroepen tellen als definitief. Staat er al een definitieve toewijzing, dan tellen ze niet dubbel.
+const VERGEEF_STANDEN = [
+  { id: 'niet',  label: 'Nog niet uitgezet',  uitleg: 'nog niet aangeboden aan het onderwijs', stijl: 'bg-slate-100 text-slate-600 border-slate-200' },
+  { id: 'vrij',  label: 'Uitgezet, nog vrij', uitleg: 'aangeboden, nog niemand heeft het',      stijl: 'bg-sky-50 text-sky-800 border-sky-200' },
+  { id: 'optie', label: 'Misschien vergeven', uitleg: 'iemand heeft een optie, nog niet zeker',  stijl: 'bg-amber-50 text-amber-800 border-amber-200' },
+  { id: 'deels', label: 'Deels vergeven',     uitleg: 'een deel van de plekken is definitief',   stijl: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+  { id: 'vol',   label: 'Definitief vergeven', uitleg: 'alle plekken zijn definitief',           stijl: 'bg-brandlight text-branddark border-brand/30' },
+  { id: 'over',  label: 'Overboekt',          uitleg: 'meer groepen beloofd dan er plekken zijn', stijl: 'bg-rose-50 text-rose-700 border-rose-300' },
+];
+const VERGEEF_STAND = Object.fromEntries(VERGEEF_STANDEN.map(x => [x.id, x]));
+const OPTIE_OUD_DAGEN = 14;
+const plekkenIngesteld = t => parseInt(t && t.plekken, 10) > 0;
+const plekkenVan = (t, gekoppeld) => plekkenIngesteld(t) ? parseInt(t.plekken, 10) : Math.max(1, gekoppeld || 0);
+const groepenVanToewijzing = x => { const n = parseInt(x && x.groepen, 10); return n > 0 ? n : 1; };
+const toewijzingInPeriode = (x, p) => allePeriodes(p) || !x.semester || x.semester === p;
+// hoeveel studentengroepen per traject in deze periode
+function gekoppeldPerTrajectVan(groepen, p) {
+  const m = new Map();
+  (groepen || []).forEach(g => { if (g.trajectId && inWerkperiode(groepSemester(g), p)) m.set(g.trajectId, (m.get(g.trajectId) || 0) + 1); });
+  return m;
+}
+function vergeefStand(t, gekoppeld, p) {
+  const plekken = plekkenVan(t, gekoppeld);
+  const tw = (t.toewijzingen || []).filter(x => toewijzingInPeriode(x, p));
+  const defToegewezen = tw.filter(x => x.status === 'definitief').reduce((n, x) => n + groepenVanToewijzing(x), 0);
+  const optie = tw.filter(x => x.status !== 'definitief').reduce((n, x) => n + groepenVanToewijzing(x), 0);
+  const definitief = Math.max(defToegewezen, gekoppeld || 0);
+  const beloofd = definitief + optie;
+  const stand = beloofd > plekken ? 'over' : definitief >= plekken ? 'vol' : optie > 0 ? 'optie' : definitief > 0 ? 'deels' : t.uitgezetOp ? 'vrij' : 'niet';
+  const vandaag = CGT.vandaagISO();
+  const oudeOpties = tw.filter(x => x.status !== 'definitief' && x.datum && CGT.diffDays(vandaag, x.datum) > OPTIE_OUD_DAGEN);
+  return { plekken, plekkenIngesteld: plekkenIngesteld(t), definitief, defToegewezen, optie, gekoppeld: gekoppeld || 0, beloofd, vrij: Math.max(0, plekken - beloofd), teveel: Math.max(0, beloofd - plekken), stand, toewijzingen: tw, oudeOpties,
+    elders: (t.toewijzingen || []).length - tw.length };
+}
+function VergeefBadge({ s, klein }) {
+  if (!s) return null;
+  const st = VERGEEF_STAND[s.stand];
+  const tal = s.stand === 'niet' ? '' : ` · ${s.definitief}${s.optie ? '+' + s.optie : ''}/${s.plekken}`;
+  return <span title={st.uitleg + ` (definitief ${s.definitief}, optie ${s.optie}, plekken ${s.plekken})`}
+    className={'inline-block whitespace-nowrap rounded-full border px-2 py-0.5 ' + (klein ? 'text-[11px] ' : 'text-xs ') + st.stijl}>{s.stand === 'over' ? '⚠ ' : ''}{st.label}{tal}</span>;
+}
+
+// Zijpaneel bij Trajecten: hoeveel is uitgezet, vergeven en nog vrij. Klik op een regel = filter.
+function UitzetOverzicht({ lijst, standen, periode, filter, zetFilter, onOpen, onMarkeerUitgezet }) {
+  const tel = id => lijst.filter(t => standen.get(t.id).stand === id).length;
+  const som = k => lijst.reduce((n, t) => n + standen.get(t.id)[k], 0);
+  const plekken = som('plekken'), def = lijst.reduce((n, t) => n + Math.min(standen.get(t.id).definitief, standen.get(t.id).plekken), 0);
+  const optie = lijst.reduce((n, t) => { const s = standen.get(t.id); return n + Math.max(0, Math.min(s.optie, s.plekken - s.definitief)); }, 0);
+  const vrij = som('vrij'), teveel = som('teveel');
+  const uitgezet = lijst.length - tel('niet');
+  const over = lijst.filter(t => standen.get(t.id).stand === 'over');
+  const oud = lijst.filter(t => standen.get(t.id).oudeOpties.length);
+  const nietUitgezet = lijst.filter(t => standen.get(t.id).stand === 'niet');
+  const pct = n => plekken ? (n / plekken * 100) + '%' : '0%';
+  const Regel = ({ id, label, n, sterk }) => (
+    <button type="button" onClick={() => zetFilter(filter === id ? '' : id)}
+      className={'w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg text-sm text-left ' + (filter === id ? 'bg-brandlight ring-1 ring-brand/40' : 'hover:bg-slate-50')}>
+      <span className="flex items-center gap-2"><span className={'w-2.5 h-2.5 rounded-full border ' + (VERGEEF_STAND[id] ? VERGEEF_STAND[id].stijl : 'bg-white border-slate-300')} />{label}</span>
+      <span className={'tabular-nums ' + (sterk ? 'font-semibold text-rose-700' : 'font-medium text-slate-700')}>{n}</span>
+    </button>
+  );
+  return (
+    <aside className="bg-white rounded-xl border border-slate-200 p-4 xl:sticky xl:top-4 space-y-4" aria-label="Overzicht uitzetten en vergeven">
+      <div>
+        <h3 className="font-semibold text-ink text-sm">Uitzetten en vergeven</h3>
+        <p className="text-xs text-slate-400">{allePeriodes(periode) ? 'Alle periodes' : periode} · volgt je filters</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-center">
+        <div className="rounded-lg bg-slate-50 py-2"><div className="text-2xl font-light text-ink tabular-nums">{uitgezet}<span className="text-sm text-slate-400">/{lijst.length}</span></div><div className="text-[11px] text-slate-500">trajecten uitgezet</div></div>
+        <div className={'rounded-lg py-2 ' + (vrij ? 'bg-sky-50' : 'bg-slate-50')}><div className="text-2xl font-light text-ink tabular-nums">{vrij}</div><div className="text-[11px] text-slate-500">plekken nog vrij</div></div>
+      </div>
+      <div>
+        <div className="flex h-3 rounded-full overflow-hidden bg-slate-100 border border-slate-200" role="img" aria-label={`${def} definitief, ${optie} optie, ${vrij} vrij van ${plekken} plekken`}>
+          <div className="bg-brand" style={{ width: pct(def) }} />
+          <div className="bg-amber-400" style={{ width: pct(optie) }} />
+        </div>
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5 text-[11px] text-slate-500">
+          <span><span className="inline-block w-2 h-2 rounded-full bg-brand mr-1" />definitief {def}</span>
+          <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1" />optie {optie}</span>
+          <span><span className="inline-block w-2 h-2 rounded-full bg-slate-200 mr-1" />vrij {vrij}</span>
+          <span>van {plekken} plekken</span>
+        </div>
+        {teveel > 0 && <p className="mt-1.5 text-xs font-medium text-rose-700">⚠ {teveel} groep(en) te veel beloofd</p>}
+      </div>
+      <div className="space-y-0.5">
+        <Regel id="niet" label="Nog niet uitgezet" n={tel('niet')} />
+        <Regel id="vrij" label="Uitgezet, nog vrij" n={tel('vrij')} />
+        <Regel id="optie" label="Misschien vergeven" n={tel('optie')} />
+        <Regel id="deels" label="Deels vergeven" n={tel('deels')} />
+        <Regel id="vol" label="Definitief vergeven" n={tel('vol')} />
+        <Regel id="over" label="Overboekt" n={tel('over')} sterk={tel('over') > 0} />
+        {filter && <button type="button" onClick={() => zetFilter('')} className="text-xs text-slate-500 underline px-2 pt-1">Toon alle standen</button>}
+      </div>
+      {(over.length > 0 || oud.length > 0) && (
+        <div className="border-t border-slate-100 pt-3 space-y-2">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Let op</div>
+          {over.map(t => { const s = standen.get(t.id); return (
+            <button key={t.id} type="button" onClick={() => onOpen(t.id)} className="block w-full text-left text-sm rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 hover:bg-rose-100">
+              <span className="text-rose-800 font-medium">{t.titel}</span>
+              <span className="block text-xs text-rose-700">{s.beloofd} beloofd, {s.plekken} plek(ken)</span>
+            </button>); })}
+          {oud.map(t => { const s = standen.get(t.id); return (
+            <button key={'o' + t.id} type="button" onClick={() => onOpen(t.id)} className="block w-full text-left text-sm rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 hover:bg-amber-100">
+              <span className="text-amber-900 font-medium">{t.titel}</span>
+              <span className="block text-xs text-amber-800">optie {s.oudeOpties.map(x => x.aan).join(', ')} staat langer dan {OPTIE_OUD_DAGEN} dagen open</span>
+            </button>); })}
+        </div>
+      )}
+      {nietUitgezet.length > 0 && (
+        <button type="button" onClick={() => onMarkeerUitgezet(nietUitgezet.map(t => t.id))}
+          className="w-full px-3 py-1.5 rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-slate-50" title="Zet de trajecten die je nu ziet en nog niet zijn uitgezet op 'uitgezet' met de datum van vandaag">
+          {nietUitgezet.length} zichtbare trajecten op uitgezet zetten
+        </button>
+      )}
+      <p className="text-[11px] text-slate-400 leading-snug">Een plek is één studentengroep. Gekoppelde studentengroepen tellen als definitief. Zijn de plekken niet ingesteld, dan telt 1 plek (of zoveel als er al groepen gekoppeld zijn). Plekken en toewijzingen stel je in op de pagina van een traject.</p>
+    </aside>
+  );
+}
+
+// Blok op de trajectpagina: plekken, uitgezet, en aan wie het traject is beloofd
+function UitzetBlok({ t, s, periode, contacten, onWijzig }) {
+  const [aan, setAan] = useState('');
+  const [aantal, setAantal] = useState('1');
+  const [soort, setSoort] = useState('optie');
+  const [notitie, setNotitie] = useState('');
+  const [plekkenTekst, setPlekkenTekst] = useState(String(s.plekken));
+  useEffect(() => setPlekkenTekst(String(s.plekken)), [s.plekken]);
+  const sem = allePeriodes(periode) ? ((t.semesters || []).length === 1 ? t.semesters[0] : '') : periode;
+  const keuzes = useMemo(() => [...new Set([
+    ...tagList(t.opleidingen),
+    ...(contacten || []).filter(c => c.naam && /docent|lector|begeleid|co[öo]rdinator|teacher/i.test(c.functie || '')).map(c => c.naam),
+  ])].sort((a, b) => a.localeCompare(b, 'nl')), [t.opleidingen, contacten]);
+  const vandaag = CGT.vandaagISO();
+  const naNieuw = (lijst) => vergeefStand({ ...t, uitgezetOp: t.uitgezetOp || vandaag, toewijzingen: lijst }, s.gekoppeld, periode);
+  function overboekVraag(na, wat) {
+    return confirm(`Let op: overboeken.\n\nDit traject heeft ${na.plekken} plek(ken). ${wat} zijn er ${na.beloofd} groepen beloofd: ${na.teveel} te veel.\n\nKies Annuleren om het niet te doen, of OK om toch te overboeken.`);
+  }
+  function voegToe() {
+    const naam = aan.trim();
+    if (!naam) { alert('Vul in aan wie het traject wordt vergeven (opleiding of docent).'); return; }
+    const nieuw = { id: uid(), aan: naam, groepen: Math.max(1, parseInt(aantal, 10) || 1), status: soort, semester: sem, datum: vandaag, door: ikVoorFilter(), notitie: notitie.trim() };
+    const na = naNieuw([...(t.toewijzingen || []), nieuw]);
+    if (na.teveel > s.teveel && !overboekVraag(na, 'Met deze toewijzing')) return;
+    onWijzig(x => ({ ...x, uitgezetOp: x.uitgezetOp || vandaag, toewijzingen: [...(x.toewijzingen || []), nieuw] }));
+    setAan(''); setAantal('1'); setSoort('optie'); setNotitie('');
+  }
+  function zetStatus(id, status) {
+    const lijst = (t.toewijzingen || []).map(x => x.id === id ? { ...x, status, datum: vandaag } : x);
+    const na = naNieuw(lijst);
+    if (na.teveel > s.teveel && !overboekVraag(na, 'Daarmee')) return;
+    onWijzig(x => ({ ...x, toewijzingen: (x.toewijzingen || []).map(y => y.id === id ? { ...y, status, datum: vandaag } : y) }));
+  }
+  function haalWeg(x) {
+    if (!confirm(`De ${x.status === 'definitief' ? 'definitieve toewijzing' : 'optie'} voor "${x.aan}" weghalen? De plek komt dan weer vrij.`)) return;
+    onWijzig(y => ({ ...y, toewijzingen: (y.toewijzingen || []).filter(z => z.id !== x.id) }));
+  }
+  function bewaarPlekken() {
+    const n = parseInt(plekkenTekst, 10);
+    if (!(n > 0)) { setPlekkenTekst(String(s.plekken)); return; }
+    if (n === s.plekken && s.plekkenIngesteld) return;
+    if (n < s.beloofd && !confirm(`Er zijn al ${s.beloofd} groepen beloofd. Met ${n} plek(ken) is dit traject overboekt. Toch aanpassen?`)) { setPlekkenTekst(String(s.plekken)); return; }
+    onWijzig(x => ({ ...x, plekken: String(n) }));
+  }
+  const st = VERGEEF_STAND[s.stand];
+  const vol = s.vrij === 0;
+  return (
+    <div className={'bg-white rounded-xl border p-4 mb-6 ' + (s.stand === 'over' ? 'border-rose-300' : 'border-slate-200')}>
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+        <div>
+          <h3 className="font-semibold text-ink text-sm">Uitzetten en vergeven{sem ? <span className="font-normal text-slate-400"> · {sem}</span> : null}</h3>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+            <VergeefBadge s={s} />
+            <span className="text-slate-600">{s.definitief} definitief · {s.optie} in optie · {s.vrij} vrij van {s.plekken} plek(ken)</span>
+          </div>
+          {s.stand === 'over' && <p className="mt-1 text-sm text-rose-700">⚠ Er zijn {s.teveel} groep(en) meer beloofd dan er plekken zijn. Haal een optie weg of verhoog het aantal plekken.</p>}
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <label className="flex items-center gap-2 text-slate-600">Plekken (groepen)
+            <input type="number" min="1" value={plekkenTekst} onChange={e => setPlekkenTekst(e.target.value)} onBlur={bewaarPlekken} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+              className="w-16 border border-slate-300 rounded-lg px-2 py-1 text-sm" />
+            {!s.plekkenIngesteld && <span className="text-xs text-slate-400">nog niet ingesteld</span>}
+          </label>
+          {t.uitgezetOp
+            ? <span className="text-slate-500">Uitgezet op {datumMetJaar(t.uitgezetOp)}{!(t.toewijzingen || []).length && <button type="button" onClick={() => onWijzig(x => ({ ...x, uitgezetOp: '' }))} className="ml-2 text-xs underline">ongedaan maken</button>}</span>
+            : <button type="button" onClick={() => onWijzig(x => ({ ...x, uitgezetOp: vandaag }))} className="px-3 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-50">Markeer als uitgezet</button>}
+        </div>
+      </div>
+      {(s.toewijzingen.length > 0 || s.gekoppeld > 0) && (
+        <div className="divide-y divide-slate-100 border-y border-slate-100 mb-3">
+          {s.toewijzingen.map(x => {
+            const dagen = x.datum ? CGT.diffDays(vandaag, x.datum) : 0;
+            return (
+              <div key={x.id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
+                <span className={'text-xs rounded-full border px-2 py-0.5 ' + (x.status === 'definitief' ? VERGEEF_STAND.vol.stijl : VERGEEF_STAND.optie.stijl)}>{x.status === 'definitief' ? 'Definitief' : 'Optie'}</span>
+                <span className="font-medium text-slate-800">{x.aan}</span>
+                <span className="text-slate-500">{groepenVanToewijzing(x)} groep{groepenVanToewijzing(x) === 1 ? '' : 'en'}</span>
+                <span className="text-xs text-slate-400">{x.datum ? 'sinds ' + datumMetJaar(x.datum) : ''}{x.door ? ' · ' + x.door : ''}{x.semester && allePeriodes(periode) ? ' · ' + x.semester : ''}</span>
+                {x.status !== 'definitief' && dagen > OPTIE_OUD_DAGEN && <span className="text-xs text-amber-800">al {dagen} dagen in optie: navragen</span>}
+                {x.notitie && <span className="text-xs text-slate-500 italic">{x.notitie}</span>}
+                <span className="ml-auto flex gap-2">
+                  {x.status === 'definitief'
+                    ? <button type="button" onClick={() => zetStatus(x.id, 'optie')} className="text-xs text-slate-500 underline">terug naar optie</button>
+                    : <button type="button" onClick={() => zetStatus(x.id, 'definitief')} className="text-xs px-2 py-1 rounded-lg bg-brand text-white hover:bg-branddark">Maak definitief</button>}
+                  <button type="button" onClick={() => haalWeg(x)} className="text-xs text-rose-600 underline" aria-label={'Weghalen: ' + x.aan}>weghalen</button>
+                </span>
+              </div>
+            );
+          })}
+          {s.gekoppeld > 0 && <div className="py-2 text-xs text-slate-500">{s.gekoppeld} studentengroep{s.gekoppeld === 1 ? '' : 'en'} gekoppeld in deze periode: telt als definitief{s.defToegewezen ? ' (niet dubbel met de definitieve toewijzingen)' : ''}.</div>}
+        </div>
+      )}
+      {s.elders > 0 && <p className="text-xs text-slate-400 mb-2">{s.elders} toewijzing(en) in een ander semester; kies bovenaan de periode om die te zien.</p>}
+      <div className="flex flex-wrap items-end gap-2 text-sm">
+        <label className="flex-1 min-w-[12rem]"><span className="block text-xs text-slate-500 mb-1">Vergeven aan (opleiding of docent)</span>
+          <input list={'vergeef-' + t.id} value={aan} onChange={e => setAan(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') voegToe(); }} placeholder="bijv. ICT of naam docent" className="w-full border border-slate-300 rounded-lg px-2 py-1.5" />
+          <datalist id={'vergeef-' + t.id}>{keuzes.map(k => <option key={k} value={k} />)}</datalist>
+        </label>
+        <label><span className="block text-xs text-slate-500 mb-1">Groepen</span>
+          <input type="number" min="1" value={aantal} onChange={e => setAantal(e.target.value)} className="w-16 border border-slate-300 rounded-lg px-2 py-1.5" /></label>
+        <label><span className="block text-xs text-slate-500 mb-1">Hoe zeker</span>
+          <select value={soort} onChange={e => setSoort(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5" data-gewoon>
+            <option value="optie">Optie (misschien)</option><option value="definitief">Definitief</option>
+          </select></label>
+        <label className="flex-1 min-w-[10rem]"><span className="block text-xs text-slate-500 mb-1">Notitie (optioneel)</span>
+          <input value={notitie} onChange={e => setNotitie(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5" /></label>
+        <button type="button" onClick={voegToe} className={'px-3 py-1.5 rounded-lg text-sm font-medium ' + (vol ? 'border border-rose-300 text-rose-700 hover:bg-rose-50' : 'bg-brand text-white hover:bg-branddark')}
+          title={vol ? 'Alle plekken zijn al beloofd: toevoegen betekent overboeken' : ''}>{vol ? 'Toevoegen (overboeken)' : '+ Vergeven'}</button>
+      </div>
+      {vol && s.stand !== 'over' && <p className="text-xs text-slate-500 mt-2">Alle plekken zijn beloofd. Komt er een groep bij? Verhoog dan eerst het aantal plekken.</p>}
+    </div>
+  );
+}
 function periodeKeuzesVan(groepen, trajecten) {
   const h = semesterVolgorde(huidigSemesterNaam());
   const tel = new Map();
@@ -3989,6 +4261,12 @@ function GroepForm({ initial, trajecten, contacten, groepen = [], onSave, onCanc
     return base;
   });
   const [manualNr, setManualNr] = useState(!isNieuw); // bestaand nummer = handmatig behouden
+  // vergeefstand van de trajecten in het semester van deze groep (zonder deze groep zelf mee te tellen)
+  const groepSem = f.semester || groepSemester(f) || huidigSemesterNaam();
+  const anderen = useMemo(() => gekoppeldPerTrajectVan((groepen || []).filter(g => g.id !== f.id), groepSem), [groepen, f.id, groepSem]);
+  const trajectStanden = useMemo(() => new Map(trajecten.map(t => [t.id, vergeefStand(t, anderen.get(t.id) || 0, groepSem)])), [trajecten, anderen, groepSem]);
+  const gekozenTraject = trajecten.find(t => t.id === f.trajectId);
+  const gekozenStand = gekozenTraject ? vergeefStand(gekozenTraject, (anderen.get(gekozenTraject.id) || 0) + 1, groepSem) : null;
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const eerdereCG = useMemo(() => cgRollenVan(initial).rest, []);
   const rolOpties = (lijst, huidig) => { const l = lijst.length ? [...lijst] : [...collegas]; return huidig && !l.includes(huidig) ? [...l, huidig] : l; };
@@ -4051,8 +4329,11 @@ function GroepForm({ initial, trajecten, contacten, groepen = [], onSave, onCanc
       <Field label="Gekoppeld traject">
         <select className={inputCls} value={f.trajectId} onChange={kiesTraject}>
           <option value="">— geen —</option>
-          {trajecten.map(t => <option key={t.id} value={t.id}>{t.titel}{t.thema ? ` · ${t.thema}` : ''}</option>)}
+          {trajecten.map(t => { const s = trajectStanden.get(t.id); const eigen = t.id === f.trajectId;
+            const label = s && !eigen && s.plekkenIngesteld && s.vrij === 0 ? (s.stand === 'over' ? ' · ⚠ overboekt' : ' · vol') : '';
+            return <option key={t.id} value={t.id}>{t.titel}{t.thema ? ` · ${t.thema}` : ''}{label}</option>; })}
         </select>
+        {gekozenStand && gekozenStand.teveel > 0 && <span className="block text-xs text-rose-700 mt-1">⚠ Dit traject heeft {gekozenStand.plekken} plek(ken); met deze groep zijn er {gekozenStand.beloofd} beloofd. Verhoog de plekken bij het traject of kies een ander traject.</span>}
       </Field>
       <Field label="Thema">
         <select className={inputCls} value={f.thema} onChange={setThema}>{THEMAS.map(x => <option key={x}>{x}</option>)}</select>
